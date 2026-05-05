@@ -109,7 +109,9 @@ Read the diagram top-to-bottom: a client request enters the API, the API hands i
 
 ---
 
-## 5. The Agent catalog
+## 5. Agents — catalog, patterns, tools, frameworks
+
+### 5.1 Catalog
 
 Each agent is one **system prompt + one tool list + one model**. They never share prompts. They communicate only via the event bus and the shared session store. This is how we get clean A2A.
 
@@ -129,6 +131,130 @@ A few rules apply to every agent:
 - **One job each.** If a prompt has two responsibilities, split it.
 - **Tools over free text.** When an agent needs to do something deterministic (compute mastery, schedule SR), it calls a tool, not "reasons about it."
 - **Stateless agents, stateful sessions.** The agent process holds no memory between calls; everything lives in the session store.
+
+### 5.2 Agent design patterns we use
+
+We deliberately mix six well-known agentic patterns. Each agent in §5.1 is built around one (sometimes two) of these. Patterns are taken from Anthropic's "Building effective agents" taxonomy.
+
+| Pattern | What it is (one line) | Where we use it |
+|---------|-----------------------|-----------------|
+| **1. Prompt chaining** | Break one task into a fixed sequence of LLM calls; each step's output feeds the next. | **Tutor**: `explain → simplify-to-layman → produce-mindmap-nodes → 3-line-summary`. **Onboarding**: `collect-fields → run-diagnostic → write-profile`. |
+| **2. Routing** | A classifier-style step picks one of N downstream paths. | **Coach** routes the user to the next topic by priority. **Examiner** routes the result: `understood → Assessor`, `gap → Tutor (re-teach)`. |
+| **3. Parallelisation** | Independent sub-tasks run concurrently and results are joined. | **Insight** fans out to `cutoffs`, `selection_pct`, `topic_heatmap` in parallel and joins. **Tutor** runs `notes RAG` and `mindmap render` concurrently. |
+| **4. Orchestrator–workers** | A lead agent decomposes a job and dispatches to specialised workers; lead joins their outputs. | **Coach** is the orchestrator for a day's session, dispatching Tutor → Examiner → Assessor. The lead does not do the worker's job; it only routes and joins. |
+| **5. Evaluator–optimiser** | One LLM produces, another LLM evaluates; loop until criteria met (or budget exhausted). | **Tutor (producer) ↔ Examiner (evaluator)**: Examiner judges comprehension; on fail, Tutor regenerates with the gap noted. Hard-capped at 3 iterations to avoid loops. |
+| **6. Autonomous agent (with guardrails)** | A single agent loops with tools until a stop condition; used only where unbounded reasoning is needed. | **Coach nightly replan**: pulls progress, decides if/how to adjust the plan, writes a new schedule. Bounded by a cost budget and a max-tool-calls cap. |
+
+How patterns combine in one user turn:
+
+```
+Coach (Orchestrator-workers)
+  ├── routes (Routing) to next topic
+  └── dispatches Tutor (Prompt chaining + Parallelisation)
+                  └── handoff (A2A) → Examiner
+                                       └── (Evaluator-optimiser loop with Tutor)
+                                            └── on pass → Assessor (Routing of card type)
+                                                         └── emits events → listeners
+                                                                            └── Progress
+                                                                            └── Coach replan (Autonomous, nightly)
+```
+
+**Why we resist a fully autonomous "one big agent":** cost, latency, debuggability, and prompt drift. A pattern-per-agent setup is what makes the system inspectable and cheap.
+
+### 5.3 In-process tool inventory
+
+Tools are functions the LLM can call. We split them into **in-process tools** (live in the agent's own Python module) and **MCP tools** (exposed by separately running MCP servers — see §7). MCP wins when a tool is reusable across agents or projects; in-process wins when a tool is tightly coupled to one agent's database tables.
+
+| Tool | Owner agent(s) | Kind | Inputs → Output | Why in-process (not MCP) |
+|------|----------------|------|-----------------|--------------------------|
+| `save_profile` | Onboarding | DB write | `(user_id, exam_id, exam_date, daily_minutes)` → `profile_id` | Tied to `profiles` table. |
+| `score_diagnostic` | Onboarding | Pure function | `(answers[])` → `level: novice|intermediate|advanced` | Pure logic. |
+| `compute_plan` | Coach | Algorithm + DB read | `(user_id, days_to_exam, weights)` → `schedule_json` | Reads several internal tables. |
+| `mark_topic_status` | Coach | DB write | `(user_id, topic_id, status)` → `ok` | Trivial DB call. |
+| `write_lesson_md` | Tutor | DB write | `(topic_id, user_id, markdown)` → `lesson_id` | Stores artefact. |
+| `ask_question` | Examiner | LLM sub-call | `(lesson_context, n)` → `questions[]` | Coupled to comprehension log. |
+| `judge_answer` | Examiner | LLM sub-call | `(question, answer, rubric)` → `{score, gap}` | Coupled. |
+| `score_card` | Assessor | LLM sub-call (Haiku) | `(card, attempt)` → `{score, feedback}` | High-volume; cheap. |
+| `schedule_sr` | Assessor | Pure function | `(card_id, score)` → `due_at` | SM-2 / FSRS algo, no I/O. |
+| `compute_mastery` | Progress | Pure function | `(attempts[])` → `mastery_pct` | Pure. |
+| `predict_readiness` | Progress | Pure function + DB read | `(user_id)` → `readiness_pct` | Reads progress table. |
+| `bundle_markdown` | Export | File assembly | `(lesson, mindmap, cards)` → `zip_bytes` | Tight coupling to artefact format. |
+| `emit_event` | (all) | Bus write | `(name, payload)` → `ok` | Shared utility. |
+| `read_session` / `write_session` | (all) | KV ops | `(session_id, slice)` → `state` | Shared utility. |
+
+**Tool-design rules** (apply to every tool, in-process or MCP):
+- Typed input/output via Pydantic — no free-form strings.
+- Deterministic when possible; LLM sub-calls only when judgement is required.
+- Idempotent writes — every tool can be retried by the orchestrator without duplicate effects.
+- Side-effects logged to `events` for replay.
+- Token-cost-aware: tools that wrap LLM calls report their token usage.
+
+(For MCP-exposed tools — `syllabus-server`, `pyq-server`, `mindmap-server`, `pdf-server`, `stats-server` — see §7.)
+
+### 5.4 Frameworks & libraries
+
+Pinned choices. Anything not on this list requires a written ADR before adoption.
+
+**Agent runtime**
+- **`anthropic`** (Python SDK) — direct LLM calls, tool use, streaming.
+- **`claude-agent-sdk`** — agent loop, tool registration, MCP client, sessions. Default for every agent in §5.1.
+- **`mcp`** (official Python SDK) — for building our 5 MCP servers (§7).
+
+**Orchestration & async**
+- **`asyncio` + `httpx`** — concurrency, HTTP.
+- **`redis-py` (asyncio)** — Streams (event bus), pub/sub, cache.
+- **`apscheduler`** — time-based event emission (`user.idle_3d`, `exam.t-14d`).
+- **(later) `langgraph`** — only if A2A graph grows past ~15 nodes; until then the custom orchestrator is enough.
+
+**API & schemas**
+- **`fastapi`** — HTTP API, SSE.
+- **`pydantic` v2** — every tool input/output, every event payload, every API request/response.
+- **`sse-starlette`** — server-sent events for Tutor/Examiner streaming.
+
+**Data**
+- **`sqlalchemy` 2.x (async) + `asyncpg`** — Postgres access.
+- **`pgvector`** — vector index inside Postgres.
+- **`alembic`** — migrations.
+- **`boto3`** / **`aiobotocore`** — S3 / R2.
+
+**RAG**
+- **`voyageai`** *or* **`openai`** (embeddings) — picked after the §18 spike.
+- **Hybrid search** via `pgvector` (dense) + Postgres `tsvector` (BM25-ish) — no separate search engine.
+- **`langchain-text-splitters`** — only the splitter; not the wider LangChain stack.
+
+**Observability**
+- **`opentelemetry-api` / `opentelemetry-sdk` / `opentelemetry-instrumentation-fastapi`**.
+- **`langfuse`** — LLM tracing; one trace per agent run, A2A produces parent/child links.
+- **`structlog`** — JSON logs.
+
+**Testing**
+- **`pytest` + `pytest-asyncio`** — units and integration.
+- **`vcrpy`** — record/replay LLM responses for deterministic tests.
+- **`anthropic` evals harness** — per-agent regression suite (e.g., Examiner's `judge_answer` precision).
+- **`testcontainers-python`** — Postgres + Redis + MCP servers in CI.
+
+**Web client**
+- **React 18 + Vite + TypeScript**.
+- **TanStack Query** — server state + SSE consumption.
+- **`openapi-typescript`** — types generated from FastAPI's OpenAPI.
+
+**Mobile client (v1.1)**
+- **React Native via Expo** + **EAS Build / Submit / Updates**.
+- Same TypeScript types as web.
+
+**Tooling & DX**
+- **`uv`** — Python package manager / resolver (fast, lockfile).
+- **`ruff`** — lint + format.
+- **`mypy`** — types.
+- **`pre-commit`** — local hook runner.
+- **Docker Compose** — local dev stack (§17.2).
+
+**What we deliberately do NOT use (yet)**
+- **CrewAI** — role abstractions overlap with our explicit agent catalog; less control than custom orchestrator.
+- **AutoGen** — same reason.
+- **Full LangChain** — too broad; we cherry-pick utilities only.
+- **A separate vector DB (Pinecone, Weaviate, Qdrant)** — `pgvector` is sufficient at our scale and saves a service.
+- **Kafka** — Redis Streams is enough for our event volume; revisit at >1k events/sec sustained.
 
 ---
 
