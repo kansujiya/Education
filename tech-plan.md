@@ -697,6 +697,45 @@ This section is for the case where the project is funded out of pocket. Goal: sh
 **Stack summary in one breath:**
 > Oracle Always-Free ARM VM runs FastAPI + workers + scheduler + 5 MCP servers + Redis + Langfuse, all in Docker Compose. Postgres lives on Neon (free). Object store is R2 (free). Web ships to Cloudflare Pages. CI is GitHub Actions. The only line item that actually charges money is the Anthropic API.
 
+### 18.2.1 Where each agentic component lives (explicit mapping)
+
+The §18.2 table groups by infrastructure layer. This sub-table groups by **agentic concept** so you can confirm every box from §3 has a free home.
+
+| Component (from §3 / §5 / §7 / §8 / §9) | Where it runs on the free path | Hosting cost | Variable cost |
+|------------------------------------------|--------------------------------|--------------|---------------|
+| **9 AI agents** (Onboarding, Syllabus, Coach, Tutor, Examiner, Assessor, Insight, Progress, Export) | In-process inside the FastAPI app on the Oracle VM (one Python process for v0.1; split later). Each agent = system prompt + tool list + model. | $0 | Anthropic tokens (§18.3) |
+| **Anthropic API (Sonnet / Haiku)** | Anthropic-hosted; we are the client. | $0 platform fee | Per-token (§18.3 cuts target $5–$25/mo) |
+| **Embedding model** | Local `sentence-transformers/all-MiniLM-L6-v2` running inside `mcp-pyq` on the Oracle VM. No external embedding API. | $0 | $0 |
+| **RAG retrieval (`notes_index`, `pyq_index`)** | `pgvector` extension inside Neon free Postgres. Hybrid search uses Postgres `tsvector`. | $0 | $0 (within Neon free tier) |
+| **MCP server: `syllabus-server`** | Docker container on Oracle VM | $0 | $0 |
+| **MCP server: `pyq-server`** | Docker container on Oracle VM (also hosts the local embedding model) | $0 | $0 |
+| **MCP server: `mindmap-server`** | Docker container on Oracle VM (Mermaid → SVG, no GPU) | $0 | $0 |
+| **MCP server: `pdf-server`** | Docker container on Oracle VM (WeasyPrint) | $0 | $0 |
+| **MCP server: `stats-server`** | Docker container on Oracle VM | $0 | $0 |
+| **Orchestrator** (synchronous A2A handoff) | Embedded in the FastAPI process | $0 | $0 |
+| **Event bus** (Redis Streams) | Self-hosted Redis 7 in Docker on the Oracle VM | $0 | $0 |
+| **Listeners** (`progress_updater`, `spaced_rep_scheduler`, `plan_replanner`, `nudge_idle`, `revision_switcher`, `analytics_collector`, `bundle_prebuilder`) | Single `worker-events` Python process on the Oracle VM, consuming Redis Streams | $0 | $0 |
+| **Scheduler** (APScheduler emits `user.idle_3d`, `exam.t-14d`) | Single `scheduler` process on the Oracle VM, leader-locked in Redis | $0 | $0 |
+| **Sessions / hot agent memory** | Redis on the Oracle VM | $0 | $0 |
+| **Durable state** (users, plans, progress, cards, artefacts, events) | Neon free Postgres | $0 | $0 (within free tier) |
+| **Downloadable artefact bundles** | Cloudflare R2 (free egress) | $0 | $0 (within 10 GB) |
+| **Auth (JWT issuer)** | Supabase Auth free *or* Clerk free | $0 | $0 (within MAU cap) |
+| **Web client (React + Vite)** | Cloudflare Pages | $0 | $0 |
+| **Mobile builds (v1.1)** | Expo EAS free | $0 | $0 (30 builds/mo) |
+| **LLM tracing (Langfuse)** | Self-hosted Langfuse Docker container on the Oracle VM | $0 | $0 |
+| **Metrics + logs** | Grafana Cloud free | $0 | $0 (within free quota) |
+| **Errors** | Sentry free | $0 | $0 (within free quota) |
+| **CI/CD** | GitHub Actions | $0 | $0 (free for public repo) |
+| **Domain / TLS** | `*.pages.dev` + Let's Encrypt via Caddy on the VM | $0 | $0 |
+
+**Reading this table:** every component named anywhere in this document has a row, runs on free infrastructure, and the only money you spend goes to **Anthropic per token** — which is itself driven down to $5–$25/month by §18.3.
+
+**Two practical implications:**
+
+1. **All agents share one Python process in v0.1.** They are not separate microservices. This is intentional — it keeps memory and CPU on the single free VM. We split them only when (a) one agent saturates a CPU core, or (b) we want independent deploys. Both are post-v0.1 problems.
+2. **All MCP servers share one VM.** Each is its own container so the boundaries stay clean (and so you can pop one out to a separate host later), but they all sit on the same Oracle box behind Docker Compose. The MCP transport is local stdio in v0.1 (zero network overhead).
+
+
 ### 18.3 LLM cost playbook (the real bill)
 
 A single Tutor → Examiner → Assessor topic loop on Sonnet-4.6 can cost ~$0.05–$0.15. At 100 topics/day across users, that is $5–$15/day = $150–$450/month. Cuts:
