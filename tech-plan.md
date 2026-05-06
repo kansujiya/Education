@@ -597,7 +597,7 @@ Secrets in dev come from `.env` (gitignored). `ANTHROPIC_API_KEY` is the only re
 | Object store | **Cloudflare R2** or **AWS S3**                | same |
 | CDN          | **Cloudflare** in front of the web client       | same |
 
-Why this path: each piece is managed, free-tier-friendly for v0.1, and migrates to AWS without architectural changes.
+Why this path: each piece is managed, free-tier-friendly for v0.1, and migrates to AWS without architectural changes. **For the truly zero-budget path, see §18.**
 
 ### 17.6 Secrets & config
 
@@ -657,7 +657,139 @@ Why this path: each piece is managed, free-tier-friendly for v0.1, and migrates 
 
 ---
 
-## 18. Open spikes before v0.1 build starts
+## 18. Zero-budget / cheapest-cloud hosting
+
+This section is for the case where the project is funded out of pocket. Goal: ship v0.1 and v1.0 for **₹0–₹500 / month** (~$0–$6) until the product earns its keep. Every choice here is a substitution into the architecture in §17 — no architectural changes, just cheaper providers and tighter LLM use.
+
+### 18.1 Philosophy
+
+1. **Free tiers first; pay only when a tier breaks.** Pick providers whose free tier is permanent, not 12-month trials.
+2. **One always-free VM is the workhorse.** Run the API + workers + MCP servers on it. Use managed free services only for things that are painful to self-host (Postgres, object store).
+3. **LLM cost is the real bill, not infra.** Most "free hosting" guides ignore this. Your monthly cap is set by Anthropic spend, so most of this section is about cutting LLM cost.
+4. **Defer auth, mobile, and observability SaaS** until you actually have users. Self-host or use OSS equivalents.
+5. **No vendor lock-in.** Every free pick has a paid migration target already named in §17.5.
+
+### 18.2 Free-tier stack (the recommended substitution)
+
+| Layer | Free pick | Free-tier limit (≈, verify before you build) | Paid migration target (§17.5) |
+|-------|-----------|----------------------------------------------|-------------------------------|
+| **Compute (API + workers + MCP)** | **Oracle Cloud "Always Free" — ARM Ampere VM** (up to 4 vCPU, 24 GB RAM, 200 GB disk) | Permanent free, no 12-month clock. The single best deal in cloud. | Fly.io / Railway / Fargate |
+| Backup compute (if Oracle capacity unavailable) | **Google Cloud `e2-micro`** in us-west1/central1/east1 | 1 vCPU, 1 GB RAM permanent free. | same |
+| **Postgres + pgvector** | **Neon** free | 0.5 GB storage, autosuspend, 1 project, branch-on-PR. Has `pgvector`. | Neon Pro / RDS |
+| Alt Postgres + Auth + Storage | **Supabase** free | 500 MB DB, 1 GB storage, 50k MAU auth, `pgvector`. | Supabase Pro |
+| **Redis** (cache + Streams + bus) | **Self-host Redis 7 on the Oracle VM** | unlimited (your VM RAM) | Upstash / Elasticache |
+| Backup Redis | **Upstash** free | 10k commands/day, 256 MB. Tight for an event bus. | Upstash paid |
+| **Object store** (bundles, mind-map images) | **Cloudflare R2** free | 10 GB storage + free egress. No egress fees ever — huge for downloads. | R2 paid / S3 |
+| **Auth** | **Supabase Auth** free | 50k MAU. JWTs work natively with FastAPI. | Clerk / Auth0 paid |
+| Alt auth | **Clerk** free | 10k MAU. | same |
+| **Web hosting (React + Vite)** | **Cloudflare Pages** | unlimited static + 100k Worker requests/day. | same |
+| **CI/CD** | **GitHub Actions** | 2,000 free minutes/month for private repos; unlimited for public. | same |
+| **Domain** | Use **`*.pages.dev`** + **`*.workers.dev`** subdomains until paid | free | $10/yr `.com` via Cloudflare Registrar |
+| **TLS** | Cloudflare or Let's Encrypt via Caddy on the VM | free | same |
+| **LLM tracing** | **Langfuse self-hosted** on the Oracle VM (Docker) | free | Langfuse Cloud |
+| **Metrics + logs** | **Grafana Cloud free** (10k metrics, 50 GB logs, 14-day retention) | free | Grafana Cloud paid |
+| **Errors** | **Sentry free** | 5k errors/month, 1 user. | Sentry paid |
+| **Mobile builds (v1.1)** | **Expo EAS** free | 30 builds/month + free OTA updates. | EAS Production |
+| **TestFlight / Play Internal** | free | unlimited testers (with limits). | same |
+| **Mind-map rendering** | **Mermaid** (text → SVG, browser-side) — no server cost | free | same |
+| **PDF export** | **WeasyPrint** running inside `mcp-pdf` on the Oracle VM | free | same |
+
+**Stack summary in one breath:**
+> Oracle Always-Free ARM VM runs FastAPI + workers + scheduler + 5 MCP servers + Redis + Langfuse, all in Docker Compose. Postgres lives on Neon (free). Object store is R2 (free). Web ships to Cloudflare Pages. CI is GitHub Actions. The only line item that actually charges money is the Anthropic API.
+
+### 18.3 LLM cost playbook (the real bill)
+
+A single Tutor → Examiner → Assessor topic loop on Sonnet-4.6 can cost ~$0.05–$0.15. At 100 topics/day across users, that is $5–$15/day = $150–$450/month. Cuts:
+
+1. **Default to Haiku 4.5** for Examiner judgement, Assessor card grading, Progress, Insight, Export. Sonnet only for Tutor and Coach planning. **Expected cost cut: ~5–10×.**
+2. **Aggressive prompt caching** (Anthropic's `cache_control`):
+   - Cache the system prompt of every agent (rarely changes).
+   - Cache the syllabus tree per exam.
+   - Cache PYQ retrieval blobs per topic.
+   Hits give ~90% off input tokens. **Set cache hit rate as a tracked metric — target ≥70%.**
+3. **Cache generated artefacts** keyed on `(topic_id, user_level)`:
+   - Lessons, mind maps, and card sets are 80% reusable across users at the same level.
+   - First user pays the LLM cost; everyone after gets a DB read.
+4. **Use Anthropic Batch API** for non-realtime work (nightly Coach replan, bundle pre-build): **50% discount.**
+5. **Per-user daily token budget** (already in §17.10). When a user nears the cap, Coach falls back to Haiku-only and reduces verbosity.
+6. **Free embeddings on the VM**: run `sentence-transformers/all-MiniLM-L6-v2` (~80 MB) inside `mcp-pyq` for RAG embeddings. Zero per-token cost. Quality is sufficient for short PYQ stems; revisit if recall@5 < 0.7.
+7. **Free fallback model for dev/staging**: route Tutor and Examiner to **Google Gemini free tier** (generous daily limit) or **Groq Llama** (free with rate limit) when `ENV != prod`. Production uses Claude.
+8. **One-shot answer cache**: hash `(prompt, model)` → response. Repeated identical calls cost nothing. Especially effective for `judge_answer` rubrics.
+9. **Anthropic signup credit** ($5) covers a few thousand Haiku calls — enough for the whole v0.1 demo if you cache.
+
+**Ballpark monthly target with all cuts applied:** $5–$25/month for ~50 active users. Below that, you can run on the free Anthropic credit for weeks.
+
+### 18.4 Tradeoffs you accept on the free path
+
+- **Cold starts** on Neon's autosuspend (~1–3s). Keep an `/healthz` cron pinging it every 5 min if needed.
+- **Single region.** Latency outside the VM's region will be higher. Acceptable for v0.1.
+- **No HA.** One VM = one point of failure. Restore from snapshot. Good enough until paying users.
+- **Manual ops.** No managed Redis means you upgrade it yourself.
+- **Limited mobile builds** (30/month on EAS free) — fine until v1.1 release cadence picks up.
+- **Slower observability** — Grafana Cloud free has 14-day retention; export critical traces yourself if needed.
+- **Oracle reclaim risk:** Always-Free VMs can be reclaimed if idle for >7 days. Run a tiny keep-alive cron.
+
+### 18.5 Signals it's time to leave the free tier
+
+Move a layer to paid when **any** of these flips:
+
+| Signal | What to upgrade |
+|--------|-----------------|
+| Neon storage > 400 MB | Neon Pro or migrate Postgres to a self-hosted instance on the VM. |
+| Upstash command count saturating (if used) | Self-host Redis on the VM, or pay Upstash. |
+| Oracle VM CPU > 70% sustained | Add a second free VM (GCP e2-micro) for workers, or pay for Fly.io. |
+| Anthropic spend > $50/month | Re-run §18.3 cuts; if still high, raise prices or charge users. |
+| MAU > 10k (Clerk) / 50k (Supabase) | Pay or migrate auth. |
+| EAS builds > 30/month | Pay EAS or use GitHub Actions for Android via `react-native-cli`. |
+
+### 18.6 The sub-$20/month path (if "free with reclaim risk" is too scary)
+
+Replace just three things from §18.2 to get a much sturdier setup:
+
+| Layer | Pick | Cost |
+|-------|------|------|
+| Compute | **Hetzner CX22** (2 vCPU, 4 GB RAM, 40 GB disk) in Falkenstein/Helsinki | ~€4.5 / ~$5/month |
+| Postgres+pgvector | Self-host on the same Hetzner box | $0 |
+| Domain | Cloudflare Registrar `.com` | ~$10/year (~$0.85/month) |
+| Everything else | Same as §18.2 (R2, Pages, GitHub Actions, Langfuse self-hosted) | $0 |
+
+**Total infra: ~$6/month.** Anthropic spend on top, capped per §18.3. This is the recommended minimum-cost setup if you want predictable, no-reclaim infrastructure.
+
+### 18.7 Migration map: free → paid (no architectural change)
+
+When the bill needs to grow up, walk this ladder. Each step is independent.
+
+```
+1. Compute:    Oracle/Hetzner  → Fly.io ($5–$20)   → AWS ECS Fargate
+2. Postgres:   Neon free       → Neon Pro ($19)    → AWS RDS
+3. Redis:      Self-host       → Upstash paid       → AWS Elasticache
+4. Object:     R2 free         → R2 paid (cheap)    → AWS S3
+5. Auth:       Supabase free   → Clerk paid         → Auth0
+6. LLM:        Haiku + cache   → Sonnet for hot paths → mix
+7. Tracing:    Self-host LF    → Langfuse Cloud
+8. Mobile:     EAS free        → EAS Production
+```
+
+Because the architecture in §3 doesn't depend on any provider's specifics, each migration is a config swap — never a rewrite.
+
+### 18.8 Day-1 checklist (free path)
+
+- [ ] Create Oracle Cloud account; provision ARM Ampere VM (4 vCPU / 24 GB) in your nearest region.
+- [ ] Open ports 443 (HTTPS), 22 (SSH).
+- [ ] Install Docker + Docker Compose; pull the repo; `docker compose up`.
+- [ ] Create Neon project; copy `DATABASE_URL` into `.env`.
+- [ ] Create Cloudflare account; set up R2 bucket + access keys; point `S3_*` env at R2.
+- [ ] Create Cloudflare Pages project; connect to repo for the web client.
+- [ ] Sign up for Anthropic; claim $5 credit; put `ANTHROPIC_API_KEY` in `.env`.
+- [ ] Add a keep-alive cron (`curl /healthz` every 5 min) to prevent Oracle reclaim.
+- [ ] Set per-user daily token budget low (e.g. 20k tokens) until you observe real usage.
+- [ ] Self-host Langfuse via its docker-compose on the same VM; route SDK there.
+
+If everything above is wired, **monthly cost is $0 + whatever you choose to spend on Anthropic** — and you have headroom equivalent to a small paid VPS, for free.
+
+---
+
+## 19. Open spikes before v0.1 build starts
 
 1. **Embedding model bake-off:** `voyage-3` vs `text-embedding-3-large` on PYQ retrieval recall@5.
 2. **Mind-map renderer:** Mermaid (text-based, easy) vs Markmap (richer) vs custom SVG — pick on mobile-render quality.
@@ -666,7 +798,7 @@ Why this path: each piece is managed, free-tier-friendly for v0.1, and migrates 
 
 ---
 
-## 19. How this maps back to the PRD
+## 20. How this maps back to the PRD
 
 | PRD requirement | Component(s) here |
 |-----------------|--------------------|
