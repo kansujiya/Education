@@ -107,6 +107,35 @@ Read the diagram top-to-bottom: a client request enters the API, the API hands i
 | Mobile client | **React Native** (Expo) | Reuses TS types from the API; v1.1. |
 | Observability | **OpenTelemetry traces + Langfuse for LLM traces** | Trace an entire A2A chain in one view. |
 
+### 4.1 Repository strategy: monorepo
+
+**Decision:** one Git repository, multiple workspaces. Layout follows `tasks.md` §1.1 (`apps/`, `mcp/`, `packages/`, `infra/`).
+
+**Why monorepo for v0.1 → v1.x:**
+
+- **Tightly coupled contracts.** Pydantic models, event payloads, and tool schemas in `packages/shared/` are imported by every Python service; the web client's TS types are *generated from the API's OpenAPI*. An event payload change must land atomically across emitter + listener + UI — only possible in one repo.
+- **Solo / small team.** Polyrepo overhead (N CI pipelines, N PRs for one logical change, version-sync gymnastics) is pure cost without a team to absorb it.
+- **Deployment matches structure.** One `docker compose up` brings up every service from one checkout. One repo → one deploy pipeline.
+- **Free-tier friendly.** GitHub Actions minutes are pooled across all components anyway; one repo keeps the workflow count down.
+- **Atomic refactors.** Renaming an agent, adding a new event, or restructuring a tool only takes one PR.
+
+**What we get with workspaces (not separate repos):**
+
+- Each app / MCP server has its own `Dockerfile`, `pyproject.toml` (or `package.json`), tests, and CI matrix lane.
+- Shared code lives in `packages/shared` and is imported via path dependencies (`uv` workspaces).
+- Independent deploy is still possible: CI can build and ship just the changed service based on path filters.
+
+**Triggers to split a service into its own repo (post-v1):**
+
+| Signal | Action |
+|--------|--------|
+| An MCP server is adopted by another project | Extract `mcp/<name>` to its own repo + publish as a package. |
+| A service ships on a fundamentally different release cadence (e.g. mobile app on App Store cycle) | Extract `apps/<name>` to its own repo. |
+| A separate team owns a service end-to-end | Extract once team boundaries are real. |
+| Build times exceed ~10 min on every push | Split the slowest lane out (rare for our scope). |
+
+Until any of these flip, **stay in the monorepo**.
+
 ---
 
 ## 5. Agents — catalog, patterns, tools, frameworks
