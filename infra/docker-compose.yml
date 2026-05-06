@@ -1,0 +1,79 @@
+# Local dev stack. Brings up everything M-0..M-7 needs.
+# Usage:
+#   docker compose -f infra/docker-compose.yml --env-file .env up -d
+# or via the Makefile:
+#   make dev
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: education
+      POSTGRES_PASSWORD: education
+      POSTGRES_DB: education
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U education"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Self-hosted Langfuse for LLM tracing. Visit http://localhost:3001 to set up.
+  langfuse-db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_db:/var/lib/postgresql/data
+
+  langfuse:
+    image: langfuse/langfuse:2
+    depends_on:
+      - langfuse-db
+    environment:
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-db:5432/langfuse
+      NEXTAUTH_SECRET: local-dev-secret-change-me
+      SALT: local-dev-salt-change-me
+      NEXTAUTH_URL: http://localhost:3001
+      TELEMETRY_ENABLED: "false"
+    ports:
+      - "3001:3000"
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  langfuse_db:
