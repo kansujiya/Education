@@ -11,7 +11,9 @@ members = [
     "api",
     "education-ai",
     "mcp-mindmap",
+    "mcp-pdf",
     "mcp-pyq",
+    "mcp-stats",
     "mcp-syllabus",
     "shared",
 ]
@@ -858,9 +860,43 @@ requires-dist = [
 ]
 
 [[package]]
+name = "mcp-pdf"
+version = "0.1.0"
+source = { editable = "mcp/pdf" }
+dependencies = [
+    { name = "mcp" },
+    { name = "pydantic" },
+    { name = "shared" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mcp", specifier = ">=1.0" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "shared", editable = "packages/shared" },
+]
+
+[[package]]
 name = "mcp-pyq"
 version = "0.1.0"
 source = { editable = "mcp/pyq" }
+dependencies = [
+    { name = "mcp" },
+    { name = "pydantic" },
+    { name = "shared" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mcp", specifier = ">=1.0" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "shared", editable = "packages/shared" },
+]
+
+[[package]]
+name = "mcp-stats"
+version = "0.1.0"
+source = { editable = "mcp/stats" }
 dependencies = [
     { name = "mcp" },
     { name = "pydantic" },

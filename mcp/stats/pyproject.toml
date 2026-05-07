@@ -1,0 +1,20 @@
+[project]
+name = "mcp-stats"
+version = "0.1.0"
+description = "MCP server: historical exam stats (cutoffs, selection %, heatmap)"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.0",
+    "pydantic>=2.7",
+    "shared",
+]
+
+[project.scripts]
+mcp-stats = "mcp_stats.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_stats"]

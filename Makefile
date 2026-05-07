@@ -66,5 +66,11 @@ plan-show: ## M-5 demo: print today + 7-day plan
 replan-demo: ## M-5 demo: simulate falling behind on a topic and replan
 	uv run edu simulate-fall-behind --user u_demo --bump-mastered cloud-concepts.benefits
 
+insight: ## M-6 demo: cutoffs / selection % / topic heatmap with provenance
+	uv run edu insight --exam aws-ccp
+
+export-bundle: ## M-6 demo: bundle a topic's lesson + mindmap + cards into a ZIP
+	uv run edu export --user u_demo --topic security.shared-resp
+
 clean: ## Remove caches and venv
 	rm -rf .venv .pytest_cache .ruff_cache .mypy_cache .uv

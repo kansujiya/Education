@@ -114,6 +114,15 @@ make replan-demo      # bump a topic to mastered=1.0 and emit plan.replan
 
 The Coach scores every leaf topic by `(pyq_frequency + 0.5) × (1 - mastery)` and packs the top scorers into the next ``min(7, days_to_exam)`` days, respecting `daily_minutes` (30 min per topic). On `plan.replan`, the **`plan_replanner`** listener pulls fresh PYQ frequencies via `mcp-pyq` and writes a new plan row — mastered topics drop in priority.
 
+### M-6 demo · "Insights + downloadable bundle"
+
+```bash
+make insight              # cutoffs / selection % / topic heatmap with provenance
+make export-bundle        # builds out/artefacts/users/u_demo/topics/<topic>/bundle.zip
+```
+
+`edu insight` fans out three concurrent calls to `mcp-stats` (cutoffs, selection %, heatmap) — every number returned carries a `source`, every estimated number is flagged. `edu export` reads the topic's lesson + mind map (from `out/<topic>/`), pulls the persisted cards, calls `mcp-pdf.bundle_markdown_zip`, and writes the ZIP via the `Storage` abstraction (local filesystem in dev, R2 / S3 in prod). When `topic.mastered` fires, the **`bundle_prebuilder`** listener does the same work in the background so download is instant.
+
 ## Development
 
 ```bash

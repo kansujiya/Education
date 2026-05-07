@@ -18,6 +18,9 @@ M-5:
     edu onboard --user u_demo --exam aws-ccp --exam-date 2026-08-01 --daily-minutes 60
     edu plan --user u_demo
     edu simulate-fall-behind --user u_demo
+M-6:
+    edu insight --exam aws-ccp
+    edu export --user u_demo --topic cloud-concepts.benefits
 """
 
 from __future__ import annotations
@@ -46,6 +49,8 @@ from api.agents import (
     CardSpec,
     CoachAgent,
     ExaminerAgent,
+    ExportAgent,
+    InsightAgent,
     OnboardingAgent,
     TutorAgent,
     TutorExaminerLoop,
@@ -770,6 +775,96 @@ async def _fetch_pyq_frequency(window_years: int = 5) -> dict[str, int]:
     if not isinstance(counts, dict):
         return {}
     return {str(k): int(v) for k, v in counts.items()}
+
+
+# ---- M-6 commands ----------------------------------------------------
+
+
+@app.command(name="insight")
+def insight(
+    exam: str = typer.Option("aws-ccp", "--exam", "-e"),
+    last_n_years: int = typer.Option(5, "--years"),
+) -> None:
+    """Print the historical insight panel for an exam (cutoffs, selection %, heatmap)."""
+
+    async def _run() -> None:
+        agent = InsightAgent()
+        panel = await agent.panel(exam, last_n_years=last_n_years)
+
+        console.print(f"[bold]Cutoffs ({len(panel.cutoffs)} years)[/bold]")
+        for row in panel.cutoffs:
+            console.print(
+                f"  {row.get('year')}  {row.get('cutoff_score')}/{row.get('max_score')}  "
+                f"[dim]{row.get('source')}[/dim]"
+            )
+        console.print(f"\n[bold]Selection % ({len(panel.selection_pct)} years)[/bold]")
+        for row in panel.selection_pct:
+            flag = " [yellow](est.)[/yellow]" if row.get("estimated") else ""
+            console.print(
+                f"  {row.get('year')}  {row.get('pct')}%{flag}  [dim]{row.get('source')}[/dim]"
+            )
+        console.print(f"\n[bold]Topic heatmap ({len(panel.heatmap)} topics)[/bold]")
+        max_count = max((it.get("pyq_count", 0) for it in panel.heatmap), default=0)
+        for it in panel.heatmap:
+            count = int(it.get("pyq_count", 0))
+            bar_len = round((count / max_count) * 18) if max_count else 0
+            bar = "█" * bar_len + "░" * (18 - bar_len)
+            console.print(f"  {bar}  {count:>2}  {it.get('topic_id')}")
+        console.print(f"\n[dim]Sources: {' | '.join(panel.sources)}[/dim]")
+
+    asyncio.run(_run())
+
+
+@app.command(name="export")
+def export(
+    topic: str = typer.Option(..., "--topic", "-t"),
+    user: str = typer.Option("u_demo", "--user", "-u"),
+    out_dir: str = typer.Option(
+        "out", "--out", help="Where to read lesson.md / mindmap.{svg,mmd} from."
+    ),
+) -> None:
+    """Bundle lesson + mindmap + cards for TOPIC into a downloadable ZIP."""
+
+    async def _run() -> None:
+        async with db_session() as db:
+            await UserRepo(db).upsert(user, email=f"{user}@example.com")
+            tree = await SyllabusRepo(db).fetch_tree("aws-ccp")
+        topic_title = (
+            _find_topic_title(tree, topic) or topic.split(".")[-1].replace("-", " ").title()
+        )
+
+        topic_dir = Path(out_dir) / topic
+        lesson_path = topic_dir / "lesson.md"
+        svg_path = topic_dir / "mindmap.svg"
+        mmd_path = topic_dir / "mindmap.mmd"
+        if not lesson_path.exists() or not svg_path.exists():
+            console.print(
+                f"[red]No lesson artefacts in {topic_dir}.[/red] "
+                f"Run [bold]edu teach --topic {topic}[/bold] first."
+            )
+            raise typer.Exit(code=1)
+
+        async with db_session() as db:
+            agent = ExportAgent()
+            result = await agent.export(
+                db,
+                user_id=user,
+                topic_id=topic,
+                topic_title=topic_title,
+                lesson_md=lesson_path.read_text(),
+                mindmap_svg=svg_path.read_text(),
+                mindmap_mermaid=mmd_path.read_text() if mmd_path.exists() else "",
+            )
+            await db.commit()
+
+        console.print(
+            f"[green]✔ Exported[/green] {topic_title}\n"
+            f"  artefact_id={result.artefact_id}\n"
+            f"  size={result.size_bytes} bytes\n"
+            f"  url={result.url}"
+        )
+
+    asyncio.run(_run())
 
 
 if __name__ == "__main__":

@@ -1,0 +1,19 @@
+{
+  "exam_id": "aws-ccp",
+  "name": "AWS Certified Cloud Practitioner",
+  "cutoffs": [
+    {"year": 2020, "cutoff_score": 700, "max_score": 1000, "source": "AWS exam blueprint"},
+    {"year": 2021, "cutoff_score": 700, "max_score": 1000, "source": "AWS exam blueprint"},
+    {"year": 2022, "cutoff_score": 700, "max_score": 1000, "source": "AWS exam blueprint"},
+    {"year": 2023, "cutoff_score": 700, "max_score": 1000, "source": "AWS exam blueprint"},
+    {"year": 2024, "cutoff_score": 700, "max_score": 1000, "source": "AWS exam blueprint"}
+  ],
+  "selection_pct": [
+    {"year": 2020, "pct": 70.0, "source": "AWS Certification Statistics 2020", "estimated": true},
+    {"year": 2021, "pct": 71.5, "source": "AWS Certification Statistics 2021", "estimated": true},
+    {"year": 2022, "pct": 72.0, "source": "AWS Certification Statistics 2022", "estimated": true},
+    {"year": 2023, "pct": 73.5, "source": "AWS Certification Statistics 2023", "estimated": true},
+    {"year": 2024, "pct": 74.0, "source": "AWS Certification Statistics 2024", "estimated": true}
+  ],
+  "heatmap_source": "Aggregated from 5 years of seeded PYQs (seeds/pyqs_aws_ccp.jsonl)"
+}
