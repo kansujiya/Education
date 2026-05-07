@@ -6,7 +6,8 @@ M-1:
     edu load-exam aws-ccp
     edu show-syllabus aws-ccp [--user u_demo]
 M-2:
-    edu teach --topic cloud-concepts.benefits [--user u_demo]
+    edu set-language --user u_demo --lang hi
+    edu teach --topic cloud-concepts.benefits [--user u_demo] [--lang hi]
 """
 
 from __future__ import annotations
@@ -19,7 +20,12 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.tree import Tree
-from shared.models import SyllabusTopic
+from shared.models import (
+    LANGUAGE_NAMES,
+    SUPPORTED_LANGUAGES,
+    Language,
+    SyllabusTopic,
+)
 
 from api.agent.base import BaseAgent
 from api.agents import TutorAgent
@@ -29,6 +35,18 @@ from api.db.session import db_session
 from api.loaders.syllabus import load_exam_via_mcp
 from api.mcp import MCPClient, MCPServerSpec
 from api.rag import NotesIndex
+
+
+def _validate_language(value: str | None) -> Language | None:
+    if value is None:
+        return None
+    for supported in SUPPORTED_LANGUAGES:
+        if value == supported:
+            return supported
+    raise typer.BadParameter(
+        f"unsupported language {value!r}. Choose from: {', '.join(SUPPORTED_LANGUAGES)}"
+    )
+
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_NOTES_PATH = REPO_ROOT / "seeds" / "notes_aws_ccp.jsonl"
@@ -63,6 +81,12 @@ def ask(
         "-m",
         help="Model override; defaults to DEFAULT_MODEL.",
     ),
+    lang: str = typer.Option(
+        "en",
+        "--lang",
+        "-l",
+        help=f"Output language. One of: {', '.join(SUPPORTED_LANGUAGES)}.",
+    ),
     stream: bool = typer.Option(
         True,
         "--stream/--no-stream",
@@ -70,12 +94,14 @@ def ask(
     ),
 ) -> None:
     """Ask a question to a single helpful-assistant agent."""
+    language = _validate_language(lang) or "en"
     client = _build_anthropic_client()
     agent = BaseAgent(
         name="assistant",
         system_prompt=(
             "You are a concise, friendly tutor. Answer in plain language. "
-            "Use analogies where they help. Cite sources only if you are sure."
+            "Use analogies where they help. Cite sources only if you are sure. "
+            f"Reply in {LANGUAGE_NAMES[language]}."
         ),
         client=client,
         model=model or settings.default_model,
@@ -177,11 +203,43 @@ def _render_topic(parent: Tree, topic: SyllabusTopic) -> None:
 # ---- M-2 commands ----------------------------------------------------
 
 
+@app.command(name="set-language")
+def set_language(
+    user: str = typer.Option(..., "--user", "-u"),
+    lang: str = typer.Option(
+        ...,
+        "--lang",
+        "-l",
+        help=f"Language code. One of: {', '.join(SUPPORTED_LANGUAGES)}.",
+    ),
+) -> None:
+    """Persist the user's preferred language for all future agent runs."""
+    language = _validate_language(lang)
+    assert language is not None  # _validate_language raises if missing
+
+    async def _run() -> None:
+        async with db_session() as db:
+            await UserRepo(db).upsert(user, email=f"{user}@example.com")
+            await UserRepo(db).set_language(user, language)
+        console.print(
+            f"[green]✔[/green] Language for [bold]{user}[/bold] set to "
+            f"[bold]{LANGUAGE_NAMES[language]}[/bold] ({language})."
+        )
+
+    asyncio.run(_run())
+
+
 @app.command(name="teach")
 def teach(
     topic: str = typer.Option(..., "--topic", "-t", help="Topic id, e.g. cloud-concepts.benefits"),
     user: str = typer.Option("u_demo", "--user", "-u"),
     level: str = typer.Option("novice", "--level", help="novice|intermediate|advanced"),
+    lang: str = typer.Option(
+        None,
+        "--lang",
+        "-l",
+        help="Override the user's saved language. en|hi.",
+    ),
     out_dir: str = typer.Option(
         "out", "--out", help="Directory to write lesson.md and mindmap.{mmd,svg}."
     ),
@@ -192,11 +250,13 @@ def teach(
     ),
 ) -> None:
     """Stream a lesson on TOPIC, then render and write the mind map."""
+    override = _validate_language(lang)
 
     async def _run() -> None:
         async with db_session() as db:
-            await UserRepo(db).upsert(user, email=f"{user}@example.com")
+            user_row = await UserRepo(db).upsert(user, email=f"{user}@example.com")
             tree = await SyllabusRepo(db).fetch_tree("aws-ccp")
+        language: Language = override or user_row.language  # type: ignore[assignment]
         topic_title = (
             _find_topic_title(tree, topic) or topic.split(".")[-1].replace("-", " ").title()
         )
@@ -205,9 +265,12 @@ def teach(
         notes = NotesIndex.from_jsonl(notes_path)
         tutor = TutorAgent(client=client, notes=notes)
 
-        console.print(f"[bold]Topic:[/bold] {topic_title}\n")
+        console.print(f"[bold]Topic:[/bold] {topic_title}")
+        console.print(f"[bold]Language:[/bold] {LANGUAGE_NAMES[language]} ({language})\n")
         console.print("[dim]Sources used:[/dim]")
-        chunks_iter, retrieved = tutor.stream_lesson(topic, topic_title, level=level)
+        chunks_iter, retrieved = tutor.stream_lesson(
+            topic, topic_title, level=level, language=language
+        )
         for r in retrieved:
             console.print(f"  [dim]- {r.chunk.source}[/dim]")
         console.print()
@@ -220,7 +283,7 @@ def teach(
         sys.stdout.write("\n")
         lesson_md = "".join(parts)
 
-        nodes = tutor.extract_mindmap(topic_title, lesson_md)
+        nodes = tutor.extract_mindmap(topic_title, lesson_md, language=language)
         mindmap = await _render_mindmap_via_mcp(nodes)
 
         out = Path(out_dir) / topic

@@ -59,6 +59,19 @@ Output goes to `out/<topic>/`:
 
 RAG is grounded in `seeds/notes_aws_ccp.jsonl`; the Tutor prints which sources it used before streaming.
 
+#### Language (English / Hindi)
+
+Persist a per-user preference, or override per call:
+
+```bash
+uv run edu set-language --user u_demo --lang hi    # save preference
+uv run edu teach --topic technology.compute        # uses saved hi
+uv run edu teach --topic technology.compute --lang en  # one-off override
+uv run edu ask "What is a VPC?" --lang hi
+```
+
+The Tutor's lesson and the mind-map node text both follow the chosen language; universal technical terms (IAM, EC2, S3, ...) stay in English regardless.
+
 ## Development
 
 ```bash

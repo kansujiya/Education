@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
+from shared.models import LANGUAGE_NAMES, Language
 
 from api.agent.anthropic_client import ToolDefinition
 from api.agent.base import BaseAgent
@@ -24,8 +25,16 @@ from api.rag import NotesIndex, RetrievedChunk
 
 LESSON_SYSTEM = """\
 You are a patient tutor for exam preparation. Teach the given topic in
-**plain, layman language** for a {level} learner. Always:
+**plain, layman language** for a {level} learner.
 
+**Output language:** {language_name}.
+- Write the entire lesson — intuition, analogy, body, summary — in {language_name}.
+- Keep technical terms that are universally used in English (e.g. "IAM", "EC2", "VPC")
+  in English even when the rest is in another language. Do not translate proper
+  nouns, product names, or acronyms.
+- Source labels (e.g. "source: AWS Whitepaper") stay in English.
+
+Always:
 - Open with a one-sentence intuition.
 - Use a concrete analogy from everyday life.
 - Tie the explanation to the supplied notes; do not invent facts that
@@ -41,6 +50,9 @@ MINDMAP_SYSTEM = """\
 You build mind-map node trees from short lessons. Output **only** by
 calling the ``submit_mindmap`` tool. The tree is at most 3 levels deep.
 Each node has 2-5 children when it has any. Keep node text under 6 words.
+
+**Node-text language:** {language_name}. Mirror the lesson's language. Keep
+universal technical terms (IAM, EC2, S3, ...) in English regardless.
 """
 
 MINDMAP_TOOL_INPUT_SCHEMA: dict[str, Any] = {
@@ -122,6 +134,7 @@ class TutorAgent:
         topic_title: str,
         *,
         level: str = "novice",
+        language: Language = "en",
         k: int = 5,
     ) -> tuple[Iterator[str], list[RetrievedChunk]]:
         """Return (chunk-iterator, notes_used).
@@ -132,7 +145,7 @@ class TutorAgent:
         retrieved = self._retrieve_with_fallback(topic_id, topic_title, k)
         agent = BaseAgent(
             name="tutor.lesson",
-            system_prompt=LESSON_SYSTEM.format(level=level),
+            system_prompt=LESSON_SYSTEM.format(level=level, language_name=LANGUAGE_NAMES[language]),
             client=self._client,
             model=self._lesson_model,
             max_tokens=1500,
@@ -140,10 +153,16 @@ class TutorAgent:
         user_prompt = self._build_user_prompt(topic_title, retrieved)
         return agent.stream(user_prompt), retrieved
 
-    def extract_mindmap(self, topic_title: str, lesson_md: str) -> dict[str, Any]:
+    def extract_mindmap(
+        self,
+        topic_title: str,
+        lesson_md: str,
+        *,
+        language: Language = "en",
+    ) -> dict[str, Any]:
         agent = BaseAgent(
             name="tutor.mindmap",
-            system_prompt=MINDMAP_SYSTEM,
+            system_prompt=MINDMAP_SYSTEM.format(language_name=LANGUAGE_NAMES[language]),
             client=self._client,
             model=self._mindmap_model,
             max_tokens=600,
@@ -173,6 +192,7 @@ class TutorAgent:
         topic_title: str,
         *,
         level: str = "novice",
+        language: Language = "en",
         k: int = 5,
         on_chunk: object = None,
     ) -> TutorResult:
@@ -182,14 +202,16 @@ class TutorAgent:
         Returns the assembled ``TutorResult``. If ``on_chunk`` is
         ``None`` the caller still gets the full text in the result.
         """
-        chunks_iter, retrieved = self.stream_lesson(topic_id, topic_title, level=level, k=k)
+        chunks_iter, retrieved = self.stream_lesson(
+            topic_id, topic_title, level=level, language=language, k=k
+        )
         parts: list[str] = []
         for chunk in chunks_iter:
             parts.append(chunk)
             if callable(on_chunk):
                 on_chunk(chunk)
         lesson_md = "".join(parts)
-        mindmap_nodes = self.extract_mindmap(topic_title, lesson_md)
+        mindmap_nodes = self.extract_mindmap(topic_title, lesson_md, language=language)
         return TutorResult(
             topic_id=topic_id,
             topic_title=topic_title,

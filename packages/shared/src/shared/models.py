@@ -15,12 +15,20 @@ from pydantic import BaseModel, ConfigDict, Field
 
 TopicStatus = Literal["not_started", "in_progress", "mastered"]
 
+# Language tags follow ISO-639-1. The agents currently support en + hi;
+# adding another language is "translate the system prompts and add it
+# to this Literal."
+Language = Literal["en", "hi"]
+SUPPORTED_LANGUAGES: tuple[Language, ...] = ("en", "hi")
+LANGUAGE_NAMES: dict[Language, str] = {"en": "English", "hi": "Hindi"}
+
 
 class User(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
     email: str
     name: str | None = None
+    language: Language = "en"
     created_at: datetime
 
 

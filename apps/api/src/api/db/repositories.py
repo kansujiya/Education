@@ -168,13 +168,39 @@ class UserRepo:
     def __init__(self, session: AsyncSession) -> None:
         self.s = session
 
-    async def upsert(self, user_id: str, email: str, name: str | None = None) -> orm.User:
+    async def upsert(
+        self,
+        user_id: str,
+        email: str,
+        name: str | None = None,
+        *,
+        language: str | None = None,
+    ) -> orm.User:
+        """Insert or update a user. ``language`` is preserved if not given."""
         existing = await self.s.get(orm.User, user_id)
         if existing is None:
-            existing = orm.User(id=user_id, email=email, name=name)
+            existing = orm.User(
+                id=user_id,
+                email=email,
+                name=name,
+                language=language or "en",
+            )
             self.s.add(existing)
         else:
             existing.email = email
             existing.name = name
+            if language is not None:
+                existing.language = language
         await self.s.flush()
         return existing
+
+    async def set_language(self, user_id: str, language: str) -> orm.User:
+        user = await self.s.get(orm.User, user_id)
+        if user is None:
+            raise LookupError(f"unknown user_id={user_id!r}")
+        user.language = language
+        await self.s.flush()
+        return user
+
+    async def get(self, user_id: str) -> orm.User | None:
+        return await self.s.get(orm.User, user_id)
