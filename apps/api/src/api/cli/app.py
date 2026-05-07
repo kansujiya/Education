@@ -26,9 +26,10 @@ from shared.models import (
     Language,
     SyllabusTopic,
 )
+from shared.tools import Judgement, Question
 
 from api.agent.base import BaseAgent
-from api.agents import TutorAgent
+from api.agents import ExaminerAgent, TutorAgent, TutorExaminerLoop
 from api.config import settings
 from api.db.repositories import SyllabusRepo, UserRepo
 from api.db.session import db_session
@@ -240,6 +241,11 @@ def teach(
         "-l",
         help="Override the user's saved language. en|hi.",
     ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive/--no-interactive",
+        help="Run the Tutor↔Examiner Socratic loop after the lesson.",
+    ),
     out_dir: str = typer.Option(
         "out", "--out", help="Directory to write lesson.md and mindmap.{mmd,svg}."
     ),
@@ -251,6 +257,8 @@ def teach(
 ) -> None:
     """Stream a lesson on TOPIC, then render and write the mind map."""
     override = _validate_language(lang)
+    if interactive:
+        return _run_interactive_teach(topic=topic, user=user, level=level, override=override)
 
     async def _run() -> None:
         async with db_session() as db:
@@ -310,6 +318,85 @@ def _find_topic_title(tree: list[SyllabusTopic], topic_id: str) -> str | None:
             if found:
                 return found
     return None
+
+
+def _run_interactive_teach(
+    *,
+    topic: str,
+    user: str,
+    level: str,
+    override: Language | None,
+) -> None:
+    """Run the Tutor↔Examiner Socratic loop end-to-end on the CLI.
+
+    On pass: prints "Understood ✓"; emits topic.understood.
+    On fail (max-iters): prints "Needs revision"; emits topic.misunderstood.
+    """
+    notes_path = DEFAULT_NOTES_PATH
+
+    async def _run() -> None:
+        async with db_session() as db:
+            user_row = await UserRepo(db).upsert(user, email=f"{user}@example.com")
+            tree = await SyllabusRepo(db).fetch_tree("aws-ccp")
+        language: Language = override or user_row.language  # type: ignore[assignment]
+        topic_title = (
+            _find_topic_title(tree, topic) or topic.split(".")[-1].replace("-", " ").title()
+        )
+
+        client = _build_anthropic_client()
+        notes = NotesIndex.from_jsonl(notes_path)
+        loop = TutorExaminerLoop(
+            tutor=TutorAgent(client=client, notes=notes),
+            examiner=ExaminerAgent(client=client),
+        )
+
+        console.print(f"[bold]Topic:[/bold] {topic_title}")
+        console.print(f"[bold]Language:[/bold] {LANGUAGE_NAMES[language]} ({language})\n")
+
+        def stream_chunk(chunk: str) -> None:
+            sys.stdout.write(chunk)
+            sys.stdout.flush()
+
+        def show_question(q: Question, idx: int, it: int) -> None:
+            console.print()
+            console.print(f"[bold]Iteration {it + 1}, Q{idx + 1}:[/bold] {q.text}")
+
+        def get_answer(_q: Question, _idx: int, _it: int) -> str:
+            answer: str = typer.prompt("Your answer", default="")
+            return answer.strip()
+
+        def show_judgement(_q: Question, _answer: str, judgement: Judgement) -> None:
+            mark = "[green]✓[/green]" if judgement.correct else "[yellow]✗[/yellow]"
+            console.print(f"  {mark} score={judgement.score:.2f}  {judgement.gap}")
+
+        result = await loop.run(
+            topic_id=topic,
+            topic_title=topic_title,
+            user_id=user,
+            get_answer=get_answer,
+            language=language,
+            level=level,
+            on_lesson_chunk=stream_chunk,
+            on_question=show_question,
+            on_judgement=show_judgement,
+        )
+
+        sys.stdout.write("\n")
+        if result.passed:
+            console.print(
+                f"[bold green]Understood ✓[/bold green] "
+                f"(iter {result.iterations}/{loop.max_iterations}, "
+                f"score {result.final_score:.2f})"
+            )
+        else:
+            console.print(
+                f"[bold yellow]Needs revision[/bold yellow] "
+                f"(iter {result.iterations}/{loop.max_iterations}, "
+                f"score {result.final_score:.2f}). "
+                f"Last gap: {result.last_gap or 'n/a'}"
+            )
+
+    asyncio.run(_run())
 
 
 async def _render_mindmap_via_mcp(node: dict[str, object]) -> dict[str, str]:

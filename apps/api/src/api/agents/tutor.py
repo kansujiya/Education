@@ -111,10 +111,22 @@ class TutorAgent:
         self._lesson_model = lesson_model or settings.default_model
         self._mindmap_model = mindmap_model or settings.high_volume_model
 
-    def _build_user_prompt(self, topic_title: str, retrieved: list[RetrievedChunk]) -> str:
+    def _build_user_prompt(
+        self,
+        topic_title: str,
+        retrieved: list[RetrievedChunk],
+        *,
+        previous_gap: str | None = None,
+    ) -> str:
+        gap_block = (
+            f"\n# Previous learner gap (focus your re-teach on this)\n{previous_gap}\n"
+            if previous_gap
+            else ""
+        )
         return (
             f"# Topic\n{topic_title}\n\n"
-            f"# Notes (use these; cite the source)\n{_format_notes(retrieved)}\n\n"
+            f"# Notes (use these; cite the source)\n{_format_notes(retrieved)}\n"
+            f"{gap_block}\n"
             "Teach me this topic now."
         )
 
@@ -136,11 +148,15 @@ class TutorAgent:
         level: str = "novice",
         language: Language = "en",
         k: int = 5,
+        previous_gap: str | None = None,
     ) -> tuple[Iterator[str], list[RetrievedChunk]]:
         """Return (chunk-iterator, notes_used).
 
         The caller streams the iterator to the user; ``notes_used`` is
         already known, so callers can render provenance immediately.
+
+        ``previous_gap`` triggers a focused re-teach (used by the
+        evaluator-optimiser loop with the Examiner).
         """
         retrieved = self._retrieve_with_fallback(topic_id, topic_title, k)
         agent = BaseAgent(
@@ -150,7 +166,7 @@ class TutorAgent:
             model=self._lesson_model,
             max_tokens=1500,
         )
-        user_prompt = self._build_user_prompt(topic_title, retrieved)
+        user_prompt = self._build_user_prompt(topic_title, retrieved, previous_gap=previous_gap)
         return agent.stream(user_prompt), retrieved
 
     def extract_mindmap(

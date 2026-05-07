@@ -48,5 +48,8 @@ seed: migrate ## M-1 demo: load AWS CCP syllabus via mcp-syllabus
 teach: ## M-2 demo: stream a layman lesson + render mind map (requires ANTHROPIC_API_KEY)
 	uv run edu teach --topic security.shared-resp
 
+examine: ## M-3 demo: full Tutor↔Examiner Socratic loop (interactive)
+	uv run edu teach --topic security.shared-resp --interactive
+
 clean: ## Remove caches and venv
 	rm -rf .venv .pytest_cache .ruff_cache .mypy_cache .uv

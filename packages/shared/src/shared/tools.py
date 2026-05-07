@@ -44,3 +44,30 @@ class DiffSyllabusOutput(BaseModel):
     added: list[str]
     removed: list[str]
     renamed: list[tuple[str, str]]
+
+
+# ---- Examiner --------------------------------------------------------
+
+
+class Question(BaseModel):
+    """A single Socratic question with the rubric needed to grade it."""
+
+    text: str
+    model_answer: str = Field(
+        ..., description="An ideal answer the question would receive top marks for."
+    )
+    key_points: list[str] = Field(
+        default_factory=list,
+        description="Facts the learner's answer should hit. Used by the judge.",
+    )
+
+
+class Judgement(BaseModel):
+    """The Examiner's verdict on a single answer."""
+
+    score: float = Field(..., ge=0.0, le=1.0)
+    correct: bool
+    gap: str = Field(
+        default="",
+        description="One-line summary of what was missing. Empty when correct.",
+    )

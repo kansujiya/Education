@@ -72,6 +72,22 @@ uv run edu ask "What is a VPC?" --lang hi
 
 The Tutor's lesson and the mind-map node text both follow the chosen language; universal technical terms (IAM, EC2, S3, ...) stay in English regardless.
 
+### M-3 demo · "Examiner Socratic loop"
+
+```bash
+make examine        # streams lesson, then asks 3 questions, judges, loops on miss
+# or:
+uv run edu teach --topic technology.compute --interactive --user u_demo
+```
+
+After the lesson streams, you'll be prompted for an answer to each of three questions. The Examiner judges every answer and:
+
+- **All correct (avg ≥ 0.7):** prints `Understood ✓`, emits `topic.understood` on the bus.
+- **Anything wrong:** the Tutor re-teaches focused on the gap and tries again — capped at 3 iterations.
+- **Still failing after 3:** prints `Needs revision`, emits `topic.misunderstood`.
+
+Both events flow through the same Redis Streams bus the M-4+ listeners will subscribe to.
+
 ## Development
 
 ```bash
