@@ -14,6 +14,10 @@ M-4:
     edu cards --user u_demo --topic cloud-concepts.benefits
     edu attempt --user u_demo --card <card_id> --answer "..."
     edu progress --user u_demo
+M-5:
+    edu onboard --user u_demo --exam aws-ccp --exam-date 2026-08-01 --daily-minutes 60
+    edu plan --user u_demo
+    edu simulate-fall-behind --user u_demo
 """
 
 from __future__ import annotations
@@ -21,12 +25,13 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.tree import Tree
-from shared.events import CardAttempted
+from shared.events import CardAttempted, PlanReplan
 from shared.models import (
     LANGUAGE_NAMES,
     SUPPORTED_LANGUAGES,
@@ -39,7 +44,9 @@ from api.agent.base import BaseAgent
 from api.agents import (
     AssessorAgent,
     CardSpec,
+    CoachAgent,
     ExaminerAgent,
+    OnboardingAgent,
     TutorAgent,
     TutorExaminerLoop,
 )
@@ -49,14 +56,16 @@ from api.db import models as orm
 from api.db.repositories import (
     CardAttemptRepo,
     CardRepo,
+    PlanRepo,
     ProgressRepo,
     SyllabusRepo,
     UserRepo,
 )
 from api.db.session import db_session
-from api.listeners import dispatch_event
+from api.listeners import dispatch_event, set_pyq_frequency_provider
 from api.loaders.syllabus import load_exam_via_mcp
 from api.mcp import MCPClient, MCPServerSpec
+from api.planning import StudyPlan
 from api.rag import NotesIndex
 
 
@@ -611,6 +620,157 @@ async def _fetch_pyqs(topic_id: str, *, k: int = 8) -> list[dict[str, object]]:
 
 # Keep ``orm`` referenced so static checkers don't trim the import.
 _ORM_KEEP: type[orm.Card] = orm.Card
+
+
+# ---- M-5 commands ----------------------------------------------------
+
+
+def _parse_exam_date(value: str) -> datetime:
+    """Accept ``YYYY-MM-DD`` or any ISO timestamp; force timezone-aware."""
+    text = value.strip()
+    if "T" not in text and len(text) == 10:
+        text = f"{text}T00:00:00+00:00"
+    elif text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    parsed = datetime.fromisoformat(text)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed
+
+
+@app.command(name="onboard")
+def onboard(
+    user: str = typer.Option("u_demo", "--user", "-u"),
+    exam: str = typer.Option(..., "--exam", "-e"),
+    exam_date: str = typer.Option(..., "--exam-date", help="YYYY-MM-DD or ISO timestamp."),
+    daily_minutes: int = typer.Option(60, "--daily-minutes"),
+    level: str = typer.Option("novice", "--level"),
+    lang: str = typer.Option(None, "--lang", "-l"),
+) -> None:
+    """Persist a profile and emit ``user.onboarded``."""
+    if level not in ("novice", "intermediate", "advanced"):
+        raise typer.BadParameter("level must be novice|intermediate|advanced")
+
+    parsed_date = _parse_exam_date(exam_date)
+    language = _validate_language(lang) or "en"
+
+    async def _run() -> None:
+        async with db_session() as db:
+            agent = OnboardingAgent()
+            result = await agent.run(
+                db,
+                user_id=user,
+                email=f"{user}@example.com",
+                exam_id=exam,
+                exam_date=parsed_date,
+                daily_minutes=daily_minutes,
+                level=level,  # type: ignore[arg-type]
+                language=language,
+                redis=get_redis(),
+            )
+        days = (parsed_date.date() - datetime.now(UTC).date()).days
+        console.print(
+            f"[green]✔ Onboarded[/green] {result.user.id} · "
+            f"exam=[bold]{result.profile.exam_id}[/bold] · "
+            f"in {days} days · {result.profile.daily_minutes} min/day · "
+            f"level={result.profile.level} · lang={result.user.language}"
+        )
+
+    asyncio.run(_run())
+
+
+@app.command(name="plan")
+def plan(
+    user: str = typer.Option("u_demo", "--user", "-u"),
+    days: int = typer.Option(7, "--days", help="Window for the printed plan."),
+) -> None:
+    """Print today + next-N-days plan for the user."""
+
+    async def _run() -> None:
+        pyq = await _fetch_pyq_frequency()
+        async with db_session() as db:
+            coach = CoachAgent()
+            try:
+                result = await coach.plan(db, user_id=user, pyq_frequency=pyq, days_window=days)
+            except LookupError:
+                console.print(
+                    f"[red]No profile for {user!r}.[/red] "
+                    f"Run [bold]edu onboard --user {user} --exam aws-ccp "
+                    f"--exam-date YYYY-MM-DD[/bold] first."
+                )
+                raise typer.Exit(code=1) from None
+            await db.commit()
+        _print_plan(result.plan)
+
+    asyncio.run(_run())
+
+
+@app.command(name="simulate-fall-behind")
+def simulate_fall_behind(
+    user: str = typer.Option("u_demo", "--user", "-u"),
+    bump_topic: str | None = typer.Option(
+        None,
+        "--bump-mastered",
+        help="Mark this topic as mastered=1.0 before replanning.",
+    ),
+) -> None:
+    """Emit ``plan.replan`` and run the listener so the demo shows
+    a regenerated schedule (deprioritising mastered topics)."""
+
+    async def _run() -> None:
+        async with db_session() as db:
+            await UserRepo(db).upsert(user, email=f"{user}@example.com")
+            if bump_topic:
+                await ProgressRepo(db, user).upsert(bump_topic, mastery=1.0)
+            await db.commit()
+
+        # Wire mcp-pyq as the frequency provider for this run.
+        set_pyq_frequency_provider(_fetch_pyq_frequency)
+        try:
+            redis = get_redis()
+            event = PlanReplan(user_id=user, reason="simulate-fall-behind")
+            async with db_session() as db:
+                await emit_event(event, redis=redis, db=db)
+                await db.commit()
+                await dispatch_event(event, db=db, redis=redis)
+                await db.commit()
+                latest = await PlanRepo(db, user).latest()
+        finally:
+            set_pyq_frequency_provider(None)
+
+        if latest is None:
+            console.print("[yellow]Replanned but no plan persisted.[/yellow]")
+            raise typer.Exit(code=2)
+        console.print("[green]Replanned ✓[/green]\n")
+        plan_obj = StudyPlan.from_dict(dict(latest.schedule))
+        _print_plan(plan_obj)
+
+    asyncio.run(_run())
+
+
+def _print_plan(plan_obj: StudyPlan) -> None:
+    console.print(
+        f"[bold]Plan[/bold] · exam {plan_obj.exam_id} on {plan_obj.exam_date}  "
+        f"({plan_obj.days_to_exam}d to go) · {plan_obj.daily_minutes} min/day"
+    )
+    for d in plan_obj.days:
+        if not d.topics:
+            console.print(f"  [dim]{d.date}[/dim]  (rest)")
+            continue
+        bullets = ", ".join(f"{t.title} ({t.minutes}m)" for t in d.topics)
+        console.print(f"  [bold]{d.date}[/bold]  {bullets}")
+
+
+async def _fetch_pyq_frequency(window_years: int = 5) -> dict[str, int]:
+    spec = MCPServerSpec(command="python", args=["-m", "mcp_pyq.server"], env=os.environ.copy())
+    out = await MCPClient(spec).call("pyq_frequency", {"window_years": window_years})
+    if not isinstance(out, dict):
+        return {}
+    counts = out.get("counts") or {}
+    if not isinstance(counts, dict):
+        return {}
+    return {str(k): int(v) for k, v in counts.items()}
+
 
 if __name__ == "__main__":
     app()

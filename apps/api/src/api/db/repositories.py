@@ -307,6 +307,62 @@ class ProgressRepo(UserScopedRepo):
         )
 
 
+class ProfileRepo(UserScopedRepo):
+    """One row per user (the active study profile)."""
+
+    async def upsert(
+        self,
+        *,
+        exam_id: str,
+        exam_date: datetime,
+        daily_minutes: int,
+        level: str = "novice",
+    ) -> orm.Profile:
+        existing = await self.s.get(orm.Profile, self.user_id)
+        if existing is None:
+            existing = orm.Profile(
+                user_id=self.user_id,
+                exam_id=exam_id,
+                exam_date=exam_date,
+                daily_minutes=daily_minutes,
+                level=level,
+            )
+            self.s.add(existing)
+        else:
+            existing.exam_id = exam_id
+            existing.exam_date = exam_date
+            existing.daily_minutes = daily_minutes
+            existing.level = level
+        await self.s.flush()
+        return existing
+
+    async def get(self) -> orm.Profile | None:
+        return await self.s.get(orm.Profile, self.user_id)
+
+
+class PlanRepo(UserScopedRepo):
+    async def save(self, schedule: dict[str, object]) -> orm.Plan:
+        row = orm.Plan(
+            id=f"plan_{uuid4().hex[:12]}",
+            user_id=self.user_id,
+            generated_at=datetime.now(UTC),
+            schedule=schedule,
+        )
+        self.s.add(row)
+        await self.s.flush()
+        return row
+
+    async def latest(self) -> orm.Plan | None:
+        return (
+            await self.s.execute(
+                select(orm.Plan)
+                .where(orm.Plan.user_id == self.user_id)
+                .order_by(orm.Plan.generated_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+
+
 class UserRepo:
     """Manages user rows; intentionally not user-scoped (admin-ish)."""
 

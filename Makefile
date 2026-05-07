@@ -57,5 +57,14 @@ drill: ## M-4 demo: issue 6 cards for a topic
 dashboard: ## M-4 demo: print progress dashboard
 	uv run edu progress
 
+onboard: ## M-5 demo: persist a profile (90 days out, 60 min/day)
+	uv run edu onboard --user u_demo --exam aws-ccp --exam-date 2026-08-01 --daily-minutes 60
+
+plan-show: ## M-5 demo: print today + 7-day plan
+	uv run edu plan --user u_demo
+
+replan-demo: ## M-5 demo: simulate falling behind on a topic and replan
+	uv run edu simulate-fall-behind --user u_demo --bump-mastered cloud-concepts.benefits
+
 clean: ## Remove caches and venv
 	rm -rf .venv .pytest_cache .ruff_cache .mypy_cache .uv

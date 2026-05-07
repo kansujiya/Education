@@ -104,6 +104,16 @@ What happens behind the scenes when you `attempt`:
 4. **`progress_updater` listener** recomputes mastery from all attempts on the topic and writes `progress`. When mastery ≥ 0.8 it emits `topic.mastered`.
 5. **`spaced_rep_scheduler` listener** stamps `due_at` on the latest attempt using SM-2-style intervals (1, 3, 7, 14, 30, 60 days; reset to 1 on miss).
 
+### M-5 demo · "Coach + onboarding"
+
+```bash
+make onboard          # persist a profile (90 days out, 60 min/day) + emit user.onboarded
+make plan-show        # 7-day plan ordered by PYQ frequency × (1 - mastery)
+make replan-demo      # bump a topic to mastered=1.0 and emit plan.replan
+```
+
+The Coach scores every leaf topic by `(pyq_frequency + 0.5) × (1 - mastery)` and packs the top scorers into the next ``min(7, days_to_exam)`` days, respecting `daily_minutes` (30 min per topic). On `plan.replan`, the **`plan_replanner`** listener pulls fresh PYQ frequencies via `mcp-pyq` and writes a new plan row — mastered topics drop in priority.
+
 ## Development
 
 ```bash
