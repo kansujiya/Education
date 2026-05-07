@@ -12,7 +12,11 @@ from typing import Any
 
 from shared.tracing import AgentRunResult
 
-from api.agent.anthropic_client import AnthropicWrapper, CompletionRequest
+from api.agent.anthropic_client import (
+    AnthropicWrapper,
+    CompletionRequest,
+    ToolDefinition,
+)
 from api.agent.tracing import trace_agent_run
 from api.config import settings
 
@@ -27,21 +31,30 @@ class BaseAgent:
         model: str | None = None,
         max_tokens: int = 1024,
         cache_system: bool = True,
+        tools: list[ToolDefinition] | None = None,
     ) -> None:
         self.name = name
         self.system_prompt = system_prompt
         self.model = model or settings.default_model
         self.max_tokens = max_tokens
         self.cache_system = cache_system
+        self.tools = tools
         self._wrapper = AnthropicWrapper(client)
 
-    def run(self, user_message: str) -> AgentRunResult:
+    def run(
+        self,
+        user_message: str,
+        *,
+        force_tool: str | None = None,
+    ) -> AgentRunResult:
         req = CompletionRequest(
             model=self.model,
             system_prompt=self.system_prompt,
             user_message=user_message,
             max_tokens=self.max_tokens,
             cache_system=self.cache_system,
+            tools=self.tools,
+            force_tool=force_tool,
         )
         with trace_agent_run(self.name, self.model, user_message) as tracer:
             result = self._wrapper.complete(req)

@@ -44,6 +44,21 @@ make seed           # applies migrations, calls mcp-syllabus, prints the topic t
 
 The `seed` target runs Alembic, then loads the AWS CCP exam syllabus through the `mcp-syllabus` MCP server (spawned over stdio), and renders the topic tree to stdout.
 
+### M-2 demo · "Tutor + mind map, streamed"
+
+```bash
+make teach          # streams a layman lesson, then writes mindmap.{md,mmd,svg}
+# or pick any topic id you saw under `make seed`:
+uv run edu teach --topic technology.compute --user u_demo
+```
+
+Output goes to `out/<topic>/`:
+- `lesson.md` — the streamed Tutor lesson with cited sources
+- `mindmap.svg` — open in any browser
+- `mindmap.mmd` — Mermaid source for the web client (M-8)
+
+RAG is grounded in `seeds/notes_aws_ccp.jsonl`; the Tutor prints which sources it used before streaming.
+
 ## Development
 
 ```bash

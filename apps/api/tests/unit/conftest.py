@@ -14,8 +14,10 @@ import pytest
 
 @dataclass
 class _FakeContentBlock:
-    text: str
+    text: str = ""
     type: str = "text"
+    name: str = ""
+    input: dict[str, Any] | None = None
 
 
 @dataclass
@@ -97,9 +99,21 @@ def fake_message() -> Any:
         output_tokens: int = 50,
         cache_read_input_tokens: int = 0,
         cache_creation_input_tokens: int = 0,
+        tool_use: dict[str, Any] | None = None,
     ) -> _FakeMessage:
+        blocks: list[_FakeContentBlock] = []
+        if text:
+            blocks.append(_FakeContentBlock(text=text))
+        if tool_use:
+            blocks.append(
+                _FakeContentBlock(
+                    type="tool_use",
+                    name=tool_use["name"],
+                    input=tool_use["input"],
+                )
+            )
         return _FakeMessage(
-            content=[_FakeContentBlock(text=text)],
+            content=blocks,
             usage=_FakeUsage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,

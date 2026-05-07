@@ -24,6 +24,15 @@ class _AnthropicLike(Protocol):
 
 
 @dataclass(slots=True)
+class ToolDefinition:
+    """A tool the LLM can call. ``input_schema`` is a JSON-Schema dict."""
+
+    name: str
+    description: str
+    input_schema: dict[str, Any]
+
+
+@dataclass(slots=True)
 class CompletionRequest:
     """Input shape we hand to the wrapper. Decoupled from the SDK."""
 
@@ -32,6 +41,8 @@ class CompletionRequest:
     user_message: str
     max_tokens: int = 1024
     cache_system: bool = True
+    tools: list[ToolDefinition] | None = None
+    force_tool: str | None = None
 
 
 def _system_blocks(system_prompt: str, cache: bool) -> list[dict[str, Any]] | str:
@@ -73,6 +84,26 @@ def _extract_text(content: Any) -> str:
     return "".join(parts)
 
 
+def _extract_tool_use(content: Any) -> dict[str, object] | None:
+    """Return ``{"name": ..., "input": ...}`` for the first tool_use block, or None."""
+    for block in content or []:
+        if getattr(block, "type", None) == "tool_use":
+            name = getattr(block, "name", None)
+            tool_input = getattr(block, "input", None)
+            if isinstance(name, str):
+                return {"name": name, "input": tool_input}
+    return None
+
+
+def _serialise_tools(tools: list[ToolDefinition] | None) -> list[dict[str, Any]] | None:
+    if not tools:
+        return None
+    return [
+        {"name": t.name, "description": t.description, "input_schema": t.input_schema}
+        for t in tools
+    ]
+
+
 class AnthropicWrapper:
     """Wraps an Anthropic SDK client, adding cache + usage parsing.
 
@@ -85,15 +116,23 @@ class AnthropicWrapper:
 
     def complete(self, req: CompletionRequest) -> AgentRunResult:
         started = time.perf_counter()
-        response = self._client.messages.create(
-            model=req.model,
-            max_tokens=req.max_tokens,
-            system=_system_blocks(req.system_prompt, req.cache_system),
-            messages=[{"role": "user", "content": req.user_message}],
-        )
+        kwargs: dict[str, Any] = {
+            "model": req.model,
+            "max_tokens": req.max_tokens,
+            "system": _system_blocks(req.system_prompt, req.cache_system),
+            "messages": [{"role": "user", "content": req.user_message}],
+        }
+        serialised_tools = _serialise_tools(req.tools)
+        if serialised_tools is not None:
+            kwargs["tools"] = serialised_tools
+        if req.force_tool:
+            kwargs["tool_choice"] = {"type": "tool", "name": req.force_tool}
+        response = self._client.messages.create(**kwargs)
         duration_ms = int((time.perf_counter() - started) * 1000)
+        content = getattr(response, "content", "")
         return AgentRunResult(
-            text=_extract_text(getattr(response, "content", "")),
+            text=_extract_text(content),
+            tool_use=_extract_tool_use(content),
             usage=_parse_usage(req.model, getattr(response, "usage", object())),
             duration_ms=duration_ms,
         )

@@ -56,6 +56,10 @@ class TokenUsage(BaseModel):
 class AgentRunResult(BaseModel):
     """Outcome of one agent run, returned by BaseAgent.run()."""
 
-    text: str = Field(description="Final assistant text")
+    text: str = Field(default="", description="Final assistant text, if any")
+    tool_use: dict[str, object] | None = Field(
+        default=None,
+        description="When the model calls a forced tool, the parsed input is here.",
+    )
     usage: TokenUsage
     duration_ms: int = 0
