@@ -1,0 +1,51 @@
+{
+  "exam_id": "aws-ccp",
+  "name": "AWS Certified Cloud Practitioner",
+  "slug": "aws-ccp",
+  "topics": [
+    {
+      "id": "cloud-concepts",
+      "title": "Cloud Concepts",
+      "weight": 0.26,
+      "children": [
+        {"id": "cloud-concepts.benefits", "title": "Benefits of the Cloud", "weight": 0.06},
+        {"id": "cloud-concepts.economics", "title": "Cloud Economics", "weight": 0.07},
+        {"id": "cloud-concepts.design", "title": "Design Principles", "weight": 0.07},
+        {"id": "cloud-concepts.deployment", "title": "Deployment Models", "weight": 0.06}
+      ]
+    },
+    {
+      "id": "security",
+      "title": "Security and Compliance",
+      "weight": 0.25,
+      "children": [
+        {"id": "security.shared-resp", "title": "Shared Responsibility Model", "weight": 0.07},
+        {"id": "security.iam", "title": "IAM and Access Control", "weight": 0.08},
+        {"id": "security.compliance", "title": "Compliance and Governance", "weight": 0.05},
+        {"id": "security.encryption", "title": "Encryption and Key Management", "weight": 0.05}
+      ]
+    },
+    {
+      "id": "technology",
+      "title": "Cloud Technology and Services",
+      "weight": 0.33,
+      "children": [
+        {"id": "technology.compute", "title": "Compute Services", "weight": 0.08},
+        {"id": "technology.storage", "title": "Storage Services", "weight": 0.07},
+        {"id": "technology.networking", "title": "Networking and Content Delivery", "weight": 0.06},
+        {"id": "technology.databases", "title": "Database Services", "weight": 0.06},
+        {"id": "technology.global-infra", "title": "Global Infrastructure", "weight": 0.06}
+      ]
+    },
+    {
+      "id": "billing",
+      "title": "Billing, Pricing and Support",
+      "weight": 0.16,
+      "children": [
+        {"id": "billing.pricing", "title": "Pricing Models", "weight": 0.05},
+        {"id": "billing.support", "title": "Support Plans", "weight": 0.05},
+        {"id": "billing.cost-mgmt", "title": "Cost Management Tools", "weight": 0.06}
+      ]
+    }
+  ]
+}
