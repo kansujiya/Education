@@ -10,6 +10,12 @@ dependencies = [
     "shared",
     "typer>=0.12",
     "rich>=13.7",
+    "sqlalchemy>=2.0",
+    "asyncpg>=0.29",
+    "psycopg2-binary>=2.9",
+    "alembic>=1.13",
+    "redis>=5.0",
+    "mcp>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +25,9 @@ dev = [
     "pytest-mock>=3.14",
     "mypy>=1.11",
     "ruff>=0.6",
+    "aiosqlite>=0.20",
+    "fakeredis>=2.20",
+    "pytest-timeout>=2.3",
 ]
 
 [project.scripts]

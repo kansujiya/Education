@@ -16,6 +16,9 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
 
+    database_url: str = "postgresql://education:education@localhost:5432/education"
+    redis_url: str = "redis://localhost:6379/0"
+
     default_model: str = "claude-opus-4-7"
     judgement_model: str = "claude-sonnet-4-6"
     high_volume_model: str = "claude-haiku-4-5-20251001"

@@ -14,23 +14,35 @@ An agentic AI exam-preparation companion. Multi-agent system that takes a candid
 | [`backlog.md`](./backlog.md) | 109 ticket-sized work items across 14 epics |
 | [`milestones.md`](./milestones.md) | 11 vertical-slice milestones, each demoable + tested |
 
-## Quickstart (M-0 demo)
+## Quickstart
 
 Prerequisites: `uv` ≥ 0.8, Docker, an Anthropic API key.
 
 ```bash
 git clone <this-repo>
 cd Education
-
 cp .env.example .env
 # edit .env: set ANTHROPIC_API_KEY=sk-ant-...
 
 make install        # uv sync --all-packages --extra dev
 make dev            # docker compose: postgres, redis, minio, langfuse
+```
+
+### M-0 demo · "Hello, agent"
+
+```bash
 make demo           # streams a Claude response to your terminal
 ```
 
-Expected output: a streamed answer + (on second identical call) a high prompt-cache hit ratio reported by `edu ask --no-stream "..."`.
+A second identical run shows a high prompt-cache hit ratio reported by `edu ask --no-stream "..."`.
+
+### M-1 demo · "Syllabus loader"
+
+```bash
+make seed           # applies migrations, calls mcp-syllabus, prints the topic tree
+```
+
+The `seed` target runs Alembic, then loads the AWS CCP exam syllabus through the `mcp-syllabus` MCP server (spawned over stdio), and renders the topic tree to stdout.
 
 ## Development
 

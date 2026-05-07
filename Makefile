@@ -35,8 +35,15 @@ test: ## Run the test suite
 demo: ## Run the M-0 demo (requires ANTHROPIC_API_KEY in .env)
 	uv run edu ask "Explain mutex in one paragraph in plain English."
 
-seed: ## Seed the local DB (added in M-1)
-	@echo "make seed: implemented in M-1"
+migrate: ## Apply DB migrations to the configured DATABASE_URL
+	cd infra/alembic && uv run alembic upgrade head
+
+migrate-down: ## Roll back to base
+	cd infra/alembic && uv run alembic downgrade base
+
+seed: migrate ## M-1 demo: load AWS CCP syllabus via mcp-syllabus
+	uv run edu load-exam aws-ccp
+	uv run edu show-syllabus aws-ccp
 
 clean: ## Remove caches and venv
 	rm -rf .venv .pytest_cache .ruff_cache .mypy_cache .uv

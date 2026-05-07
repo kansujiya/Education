@@ -1,18 +1,27 @@
-"""``edu`` CLI — the M-0 demo surface.
+"""``edu`` CLI — demo surface for each milestone.
 
-Usage:
+M-0:
     edu ask "Explain mutex in one paragraph"
+M-1:
+    edu load-exam aws-ccp
+    edu show-syllabus aws-ccp [--user u_demo]
 """
 
 from __future__ import annotations
 
+import asyncio
 import sys
 
 import typer
 from rich.console import Console
+from rich.tree import Tree
+from shared.models import SyllabusTopic
 
 from api.agent.base import BaseAgent
 from api.config import settings
+from api.db.repositories import SyllabusRepo, UserRepo
+from api.db.session import db_session
+from api.loaders.syllabus import load_exam_via_mcp
 
 app = typer.Typer(
     name="edu",
@@ -96,6 +105,63 @@ def health() -> None:
             "langfuse_enabled": bool(settings.langfuse_public_key and settings.langfuse_secret_key),
         }
     )
+
+
+# ---- M-1 commands ----------------------------------------------------
+
+
+@app.command(name="load-exam")
+def load_exam(
+    exam_id: str = typer.Argument(..., help="Exam slug, e.g. aws-ccp."),
+) -> None:
+    """Pull the syllabus via mcp-syllabus and store it in the DB."""
+
+    async def _run() -> None:
+        async with db_session() as db:
+            result = await load_exam_via_mcp(db, exam_id)
+        console.print(
+            f"[green]Loaded[/green] {result.name} "
+            f"([dim]{result.exam_id}[/dim]): {result.topic_count} topics."
+        )
+
+    asyncio.run(_run())
+
+
+@app.command(name="show-syllabus")
+def show_syllabus(
+    exam_id: str = typer.Argument(...),
+    user: str = typer.Option(
+        "u_demo",
+        "--user",
+        "-u",
+        help="User scope. Topics are global, but this confirms the user exists.",
+    ),
+) -> None:
+    """Print the topic tree for an exam."""
+
+    async def _run() -> None:
+        async with db_session() as db:
+            await UserRepo(db).upsert(user, email=f"{user}@example.com")
+            tree = await SyllabusRepo(db).fetch_tree(exam_id)
+        if not tree:
+            console.print(
+                f"[red]No topics found for {exam_id!r}.[/red] "
+                f"Run [bold]edu load-exam {exam_id}[/bold] first."
+            )
+            raise typer.Exit(code=1)
+        rendered = Tree(f"[bold]{exam_id}[/bold]")
+        for top in tree:
+            _render_topic(rendered, top)
+        console.print(rendered)
+
+    asyncio.run(_run())
+
+
+def _render_topic(parent: Tree, topic: SyllabusTopic) -> None:
+    label = f"{topic.title} [dim](w={topic.weight:.2f})[/dim]"
+    node = parent.add(label)
+    for child in topic.children:
+        _render_topic(node, child)
 
 
 if __name__ == "__main__":

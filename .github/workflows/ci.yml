@@ -37,3 +37,9 @@ jobs:
 
       - name: Pytest
         run: uv run pytest -q
+
+      - name: Alembic migrations apply on SQLite
+        run: |
+          cd infra/alembic
+          uv run alembic upgrade head
+          uv run alembic downgrade base
