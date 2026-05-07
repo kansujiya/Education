@@ -88,6 +88,22 @@ After the lesson streams, you'll be prompted for an answer to each of three ques
 
 Both events flow through the same Redis Streams bus the M-4+ listeners will subscribe to.
 
+### M-4 demo · "Cards + mastery + spaced repetition"
+
+```bash
+make drill                                         # issue 6 PYQ-grounded cards for a topic
+uv run edu attempt --card <card_id> --answer "..." # judges, fires card.attempted
+make dashboard                                     # print mastery bars per topic
+```
+
+What happens behind the scenes when you `attempt`:
+
+1. `AssessorAgent.grade_attempt` returns a `Judgement` (score, correct, gap).
+2. The attempt is persisted in `card_attempts`.
+3. `card.attempted` event lands on the Redis Streams bus.
+4. **`progress_updater` listener** recomputes mastery from all attempts on the topic and writes `progress`. When mastery ≥ 0.8 it emits `topic.mastered`.
+5. **`spaced_rep_scheduler` listener** stamps `due_at` on the latest attempt using SM-2-style intervals (1, 3, 7, 14, 30, 60 days; reset to 1 on miss).
+
 ## Development
 
 ```bash

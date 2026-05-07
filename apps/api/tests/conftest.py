@@ -151,11 +151,81 @@ def _build_judgement_input(user_message: str) -> dict[str, Any]:
     return {"score": 0.3, "correct": False, "gap": f"missing: {points[0]}"}
 
 
+def _build_cards_input(user_message: str) -> dict[str, Any]:
+    """Six deterministic cards (2 recall, 3 mcq, 1 short) with rubric key points.
+
+    The same key-point trick used by the judge: a learner answer that
+    mentions any key point is graded correct.
+    """
+    return {
+        "cards": [
+            {
+                "type": "recall",
+                "prompt": "Define pay-as-you-go in one line.",
+                "answer": "You pay only for what you use; no upfront commitment.",
+                "key_points": ["pay-as-you-go"],
+                "source_pyq_id": "pyq_001",
+                "source_year": 2023,
+            },
+            {
+                "type": "recall",
+                "prompt": "What does elasticity mean?",
+                "answer": "Capacity scales up or down on demand.",
+                "key_points": ["elasticity", "capacity"],
+                "source_pyq_id": "pyq_001",
+                "source_year": 2023,
+            },
+            {
+                "type": "mcq",
+                "prompt": (
+                    "Which is most accurate? "
+                    "A) cloud is free  B) cloud trades CapEx for OpEx  "
+                    "C) cloud removes all responsibility  D) cloud needs no security"
+                ),
+                "answer": "B",
+                "key_points": ["CapEx", "OpEx"],
+                "source_pyq_id": "pyq_003",
+                "source_year": 2024,
+            },
+            {
+                "type": "mcq",
+                "prompt": ("Which family is memory-optimised? A) M  B) C  C) R  D) T"),
+                "answer": "C",
+                "key_points": ["R family", "memory"],
+                "source_pyq_id": "pyq_016",
+                "source_year": 2023,
+            },
+            {
+                "type": "mcq",
+                "prompt": (
+                    "Encryption at rest protects: "
+                    "A) data on the wire  B) stored data  "
+                    "C) the hypervisor  D) the network"
+                ),
+                "answer": "B",
+                "key_points": ["at rest", "stored data"],
+                "source_pyq_id": "pyq_014",
+                "source_year": 2023,
+            },
+            {
+                "type": "short",
+                "prompt": "Why design for failure?",
+                "answer": "Because any single component can fail; redundancy keeps the system available.",
+                "key_points": ["redundancy", "fail"],
+                "source_pyq_id": "pyq_005",
+                "source_year": 2024,
+            },
+        ]
+    }
+
+
 def _build_tool_input(tool_name: str, user_message: str) -> dict[str, Any]:
     if tool_name == "submit_questions":
         return _build_questions_input(user_message)
-    if tool_name == "submit_judgement":
+    if tool_name in ("submit_judgement", "submit_card_judgement"):
         return _build_judgement_input(user_message)
+    if tool_name == "submit_cards":
+        return _build_cards_input(user_message)
     return _build_mindmap_input(user_message)
 
 

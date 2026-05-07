@@ -12,7 +12,9 @@ read user B's rows.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import TypeVar
+from uuid import uuid4
 
 from shared.models import SyllabusTopic as SyllabusTopicModel
 from sqlalchemy import select
@@ -160,6 +162,149 @@ class SessionRepo(UserScopedRepo):
                 )
             )
         ).scalar_one_or_none()
+
+
+class CardRepo(UserScopedRepo):
+    """Cards (flashcards / MCQ / short-answer) issued by the Assessor.
+
+    All queries scoped by ``user_id``. ``topic_id`` is a global FK; the
+    same topic id is shared across users but each user has their own
+    cards (different prompts/answers per user level / progress).
+    """
+
+    async def add_many(self, cards: list[dict[str, object]]) -> list[orm.Card]:
+        rows: list[orm.Card] = []
+        for c in cards:
+            kp_raw = c.get("key_points") or []
+            row = orm.Card(
+                id=str(c.get("id") or f"card_{uuid4().hex[:12]}"),
+                user_id=self.user_id,
+                topic_id=str(c["topic_id"]),
+                type=str(c["type"]),
+                prompt=str(c["prompt"]),
+                answer=str(c["answer"]),
+                key_points=list(kp_raw) if isinstance(kp_raw, list) else [],
+                source_pyq_id=str(c["source_pyq_id"]) if c.get("source_pyq_id") else None,
+            )
+            self.s.add(row)
+            rows.append(row)
+        await self.s.flush()
+        return rows
+
+    async def list_for_topic(self, topic_id: str) -> list[orm.Card]:
+        return list(
+            (
+                await self.s.execute(
+                    select(orm.Card).where(
+                        orm.Card.user_id == self.user_id,
+                        orm.Card.topic_id == topic_id,
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    async def get(self, card_id: str) -> orm.Card | None:
+        row = await self.s.get(orm.Card, card_id)
+        if row is None or row.user_id != self.user_id:
+            return None
+        return row
+
+
+class CardAttemptRepo(UserScopedRepo):
+    async def add(
+        self,
+        card_id: str,
+        score: float,
+        *,
+        due_at: datetime | None = None,
+        attempt_at: datetime | None = None,
+    ) -> orm.CardAttempt:
+        row = orm.CardAttempt(
+            id=f"att_{uuid4().hex[:12]}",
+            card_id=card_id,
+            user_id=self.user_id,
+            attempt_at=attempt_at or datetime.now(UTC),
+            score=score,
+            due_at=due_at,
+        )
+        self.s.add(row)
+        await self.s.flush()
+        return row
+
+    async def list_for_card(self, card_id: str) -> list[orm.CardAttempt]:
+        return list(
+            (
+                await self.s.execute(
+                    select(orm.CardAttempt)
+                    .where(
+                        orm.CardAttempt.user_id == self.user_id,
+                        orm.CardAttempt.card_id == card_id,
+                    )
+                    .order_by(orm.CardAttempt.attempt_at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    async def list_for_topic(self, topic_id: str) -> list[orm.CardAttempt]:
+        """Return attempts for any card on this topic (joined via cards.topic_id)."""
+        cards_q = select(orm.Card.id).where(
+            orm.Card.user_id == self.user_id, orm.Card.topic_id == topic_id
+        )
+        return list(
+            (
+                await self.s.execute(
+                    select(orm.CardAttempt)
+                    .where(
+                        orm.CardAttempt.user_id == self.user_id,
+                        orm.CardAttempt.card_id.in_(cards_q),
+                    )
+                    .order_by(orm.CardAttempt.attempt_at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+
+class ProgressRepo(UserScopedRepo):
+    async def upsert(
+        self,
+        topic_id: str,
+        *,
+        mastery: float,
+        predicted_readiness: float | None = None,
+    ) -> orm.Progress:
+        existing = await self.s.get(orm.Progress, (self.user_id, topic_id))
+        if existing is None:
+            existing = orm.Progress(
+                user_id=self.user_id,
+                topic_id=topic_id,
+                mastery=mastery,
+                predicted_readiness=predicted_readiness or 0.0,
+                last_touched=datetime.now(UTC),
+            )
+            self.s.add(existing)
+        else:
+            existing.mastery = mastery
+            if predicted_readiness is not None:
+                existing.predicted_readiness = predicted_readiness
+            existing.last_touched = datetime.now(UTC)
+        await self.s.flush()
+        return existing
+
+    async def get(self, topic_id: str) -> orm.Progress | None:
+        return await self.s.get(orm.Progress, (self.user_id, topic_id))
+
+    async def list_all(self) -> list[orm.Progress]:
+        return list(
+            (await self.s.execute(select(orm.Progress).where(orm.Progress.user_id == self.user_id)))
+            .scalars()
+            .all()
+        )
 
 
 class UserRepo:

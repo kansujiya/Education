@@ -51,5 +51,11 @@ teach: ## M-2 demo: stream a layman lesson + render mind map (requires ANTHROPIC
 examine: ## M-3 demo: full Tutor↔Examiner Socratic loop (interactive)
 	uv run edu teach --topic security.shared-resp --interactive
 
+drill: ## M-4 demo: issue 6 cards for a topic
+	uv run edu cards --topic security.shared-resp
+
+dashboard: ## M-4 demo: print progress dashboard
+	uv run edu progress
+
 clean: ## Remove caches and venv
 	rm -rf .venv .pytest_cache .ruff_cache .mypy_cache .uv

@@ -11,6 +11,7 @@ members = [
     "api",
     "education-ai",
     "mcp-mindmap",
+    "mcp-pyq",
     "mcp-syllabus",
     "shared",
 ]
@@ -843,6 +844,23 @@ wheels = [
 name = "mcp-mindmap"
 version = "0.1.0"
 source = { editable = "mcp/mindmap" }
+dependencies = [
+    { name = "mcp" },
+    { name = "pydantic" },
+    { name = "shared" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "mcp", specifier = ">=1.0" },
+    { name = "pydantic", specifier = ">=2.7" },
+    { name = "shared", editable = "packages/shared" },
+]
+
+[[package]]
+name = "mcp-pyq"
+version = "0.1.0"
+source = { editable = "mcp/pyq" }
 dependencies = [
     { name = "mcp" },
     { name = "pydantic" },

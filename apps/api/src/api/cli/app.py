@@ -8,6 +8,12 @@ M-1:
 M-2:
     edu set-language --user u_demo --lang hi
     edu teach --topic cloud-concepts.benefits [--user u_demo] [--lang hi]
+M-3:
+    edu teach --topic cloud-concepts --interactive
+M-4:
+    edu cards --user u_demo --topic cloud-concepts.benefits
+    edu attempt --user u_demo --card <card_id> --answer "..."
+    edu progress --user u_demo
 """
 
 from __future__ import annotations
@@ -20,6 +26,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.tree import Tree
+from shared.events import CardAttempted
 from shared.models import (
     LANGUAGE_NAMES,
     SUPPORTED_LANGUAGES,
@@ -29,10 +36,25 @@ from shared.models import (
 from shared.tools import Judgement, Question
 
 from api.agent.base import BaseAgent
-from api.agents import ExaminerAgent, TutorAgent, TutorExaminerLoop
+from api.agents import (
+    AssessorAgent,
+    CardSpec,
+    ExaminerAgent,
+    TutorAgent,
+    TutorExaminerLoop,
+)
+from api.bus.events import emit_event, get_redis
 from api.config import settings
-from api.db.repositories import SyllabusRepo, UserRepo
+from api.db import models as orm
+from api.db.repositories import (
+    CardAttemptRepo,
+    CardRepo,
+    ProgressRepo,
+    SyllabusRepo,
+    UserRepo,
+)
 from api.db.session import db_session
+from api.listeners import dispatch_event
 from api.loaders.syllabus import load_exam_via_mcp
 from api.mcp import MCPClient, MCPServerSpec
 from api.rag import NotesIndex
@@ -410,6 +432,185 @@ async def _render_mindmap_via_mcp(node: dict[str, object]) -> dict[str, str]:
         raise RuntimeError(f"mcp-mindmap returned unexpected payload: {result!r}")
     return result
 
+
+# ---- M-4 commands ----------------------------------------------------
+
+
+@app.command(name="cards")
+def cards(
+    topic: str = typer.Option(..., "--topic", "-t"),
+    user: str = typer.Option("u_demo", "--user", "-u"),
+    n: int = typer.Option(6, "--count", "-n"),
+    lang: str = typer.Option(None, "--lang", "-l"),
+) -> None:
+    """Issue ``n`` PYQ-grounded cards for TOPIC and persist them."""
+    override = _validate_language(lang)
+
+    async def _run() -> None:
+        async with db_session() as db:
+            user_row = await UserRepo(db).upsert(user, email=f"{user}@example.com")
+            tree = await SyllabusRepo(db).fetch_tree("aws-ccp")
+        language: Language = override or user_row.language  # type: ignore[assignment]
+        topic_title = (
+            _find_topic_title(tree, topic) or topic.split(".")[-1].replace("-", " ").title()
+        )
+
+        client = _build_anthropic_client()
+        notes = NotesIndex.from_jsonl(DEFAULT_NOTES_PATH)
+        tutor = TutorAgent(client=client, notes=notes)
+        # We need a recent lesson to feed the Assessor. Use the cached path.
+        lesson_md, _ = _stream_lesson_collected(tutor, topic, topic_title, language)
+        pyqs = await _fetch_pyqs(topic, k=8)
+        assessor = AssessorAgent(client=client)
+        specs: list[CardSpec] = assessor.issue_cards(
+            topic_title, lesson_md, pyqs, n=n, language=language
+        )
+
+        async with db_session() as db:
+            await UserRepo(db).upsert(user, email=f"{user}@example.com")
+            cards_repo = CardRepo(db, user)
+            persisted = await cards_repo.add_many(
+                [
+                    {
+                        "topic_id": topic,
+                        "type": s.type,
+                        "prompt": s.prompt,
+                        "answer": s.answer,
+                        "key_points": list(s.key_points),
+                        "source_pyq_id": s.source_pyq_id,
+                    }
+                    for s in specs
+                ]
+            )
+            await db.commit()
+
+        console.print(f"[green]Issued {len(persisted)} cards[/green] for {topic_title}\n")
+        for c, spec in zip(persisted, specs, strict=True):
+            console.print(f"[bold]{c.id}[/bold]  [dim]{c.type}[/dim]  {spec.prompt}")
+            if spec.source_pyq_id:
+                console.print(f"  [dim]source: {spec.source_pyq_id} ({spec.source_year})[/dim]")
+
+    asyncio.run(_run())
+
+
+@app.command(name="attempt")
+def attempt(
+    card_id: str = typer.Option(..., "--card", "-c"),
+    answer: str = typer.Option(..., "--answer", "-a"),
+    user: str = typer.Option("u_demo", "--user", "-u"),
+    lang: str = typer.Option(None, "--lang", "-l"),
+) -> None:
+    """Submit an answer for CARD_ID; judges, persists, fires listeners."""
+    override = _validate_language(lang)
+
+    async def _run() -> None:
+        async with db_session() as db:
+            user_row = await UserRepo(db).upsert(user, email=f"{user}@example.com")
+            card = await CardRepo(db, user).get(card_id)
+            if card is None:
+                console.print(f"[red]No card {card_id!r} for user {user!r}.[/red]")
+                raise typer.Exit(code=1)
+            await db.commit()
+
+        language: Language = override or user_row.language  # type: ignore[assignment]
+        client = _build_anthropic_client()
+        assessor = AssessorAgent(client=client)
+        spec = CardSpec.model_validate(
+            {
+                "type": card.type,
+                "prompt": card.prompt,
+                "answer": card.answer,
+                "key_points": list(card.key_points or []),
+                "source_pyq_id": card.source_pyq_id,
+                "source_year": None,
+            }
+        )
+        judgement = assessor.grade_attempt(spec, answer, language=language)
+
+        redis = get_redis()
+        async with db_session() as db:
+            attempt_row = await CardAttemptRepo(db, user).add(
+                card_id=card_id, score=judgement.score
+            )
+            await db.commit()
+            event = CardAttempted(
+                user_id=user,
+                card_id=card_id,
+                topic_id=card.topic_id,
+                score=judgement.score,
+                correct=judgement.correct,
+            )
+            await emit_event(event, redis=redis, db=db)
+            await db.commit()
+            await dispatch_event(event, db=db, redis=redis)
+            await db.commit()
+
+        mark = "[green]✓[/green]" if judgement.correct else "[yellow]✗[/yellow]"
+        console.print(
+            f"{mark} score={judgement.score:.2f}  due_at={attempt_row.due_at}  {judgement.gap}"
+        )
+
+    asyncio.run(_run())
+
+
+@app.command(name="progress")
+def progress(
+    user: str = typer.Option("u_demo", "--user", "-u"),
+) -> None:
+    """Print mastery + last-touched per topic for the user."""
+
+    async def _run() -> None:
+        async with db_session() as db:
+            await UserRepo(db).upsert(user, email=f"{user}@example.com")
+            rows = await ProgressRepo(db, user).list_all()
+        if not rows:
+            console.print("[dim]No progress yet — issue some cards and attempt them.[/dim]")
+            return
+        rows.sort(key=lambda r: r.mastery, reverse=True)
+        for r in rows:
+            bar_len = round(r.mastery * 20)
+            bar = "█" * bar_len + "░" * (20 - bar_len)
+            console.print(f"  {bar}  {r.mastery * 100:5.1f}%  [bold]{r.topic_id}[/bold]")
+
+    asyncio.run(_run())
+
+
+def _stream_lesson_collected(
+    tutor: TutorAgent,
+    topic: str,
+    topic_title: str,
+    language: Language,
+) -> tuple[str, object]:
+    """Run the Tutor and collect the full lesson text without printing.
+
+    Used by ``edu cards`` so the Assessor has lesson context. We don't
+    care about provenance here — the demo prints sources elsewhere.
+    """
+    chunks_iter, retrieved = tutor.stream_lesson(topic, topic_title, language=language)
+    return "".join(chunks_iter), retrieved
+
+
+async def _fetch_pyqs(topic_id: str, *, k: int = 8) -> list[dict[str, object]]:
+    """Call mcp-pyq.search_pyq and return the dict results."""
+    spec = MCPServerSpec(
+        command="python",
+        args=["-m", "mcp_pyq.server"],
+        env=os.environ.copy(),
+    )
+    out = await MCPClient(spec).call(
+        "search_pyq", {"query": topic_id, "k": k, "topic_id": topic_id}
+    )
+    if not isinstance(out, dict):
+        return []
+    results = out.get("results")
+    if not isinstance(results, list):
+        return []
+    # Each result already includes id, year, stem, model_answer, key_points.
+    return list(results)
+
+
+# Keep ``orm`` referenced so static checkers don't trim the import.
+_ORM_KEEP: type[orm.Card] = orm.Card
 
 if __name__ == "__main__":
     app()

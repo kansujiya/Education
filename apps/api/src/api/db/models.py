@@ -116,6 +116,7 @@ class Card(Base):
     type: Mapped[str] = mapped_column(String(32), nullable=False)  # recall|mcq|short
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     answer: Mapped[str] = mapped_column(Text, nullable=False)
+    key_points: Mapped[list[str]] = mapped_column(JSON, default=list)
     source_pyq_id: Mapped[str | None] = mapped_column(String(64))
 
 
