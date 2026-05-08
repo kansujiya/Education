@@ -123,6 +123,24 @@ make export-bundle        # builds out/artefacts/users/u_demo/topics/<topic>/bun
 
 `edu insight` fans out three concurrent calls to `mcp-stats` (cutoffs, selection %, heatmap) — every number returned carries a `source`, every estimated number is flagged. `edu export` reads the topic's lesson + mind map (from `out/<topic>/`), pulls the persisted cards, calls `mcp-pdf.bundle_markdown_zip`, and writes the ZIP via the `Storage` abstraction (local filesystem in dev, R2 / S3 in prod). When `topic.mastered` fires, the **`bundle_prebuilder`** listener does the same work in the background so download is instant.
 
+### M-7 demo · "Multi-user API"
+
+```bash
+make serve                                                  # FastAPI on :8000
+curl -X POST http://localhost:8000/v1/auth/signup \
+    -H 'content-type: application/json' \
+    -d '{"email":"a@x.com","password":"supersecret-pw-12"}'
+# → {"token": "...", "user_id": "u_..."}
+
+TOKEN=...                                                   # paste from above
+curl -X POST http://localhost:8000/v1/me/profile \
+    -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+    -d '{"exam_id":"aws-ccp","exam_date":"2026-08-01T00:00:00Z","daily_minutes":60}'
+curl http://localhost:8000/v1/me/plan -H "Authorization: Bearer $TOKEN"
+```
+
+The full v1 surface is documented at `http://localhost:8000/docs` (FastAPI auto-OpenAPI). All `/v1/me/*` endpoints require a JWT bearer token, are scoped to that user's data, and rate-limited to 60 req/min per user.
+
 ## Development
 
 ```bash

@@ -25,6 +25,9 @@ class Settings(BaseSettings):
 
     daily_token_budget: int = 20_000
 
+    jwt_secret: str = "change-me"
+    rate_limit_per_minute: int = 60
+
     langfuse_host: str = ""
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""

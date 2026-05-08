@@ -72,5 +72,8 @@ insight: ## M-6 demo: cutoffs / selection % / topic heatmap with provenance
 export-bundle: ## M-6 demo: bundle a topic's lesson + mindmap + cards into a ZIP
 	uv run edu export --user u_demo --topic security.shared-resp
 
+serve: ## M-7: run the FastAPI app on http://127.0.0.1:8000 with auto-reload
+	uv run uvicorn api.web.app:app --reload --port 8000
+
 clean: ## Remove caches and venv
 	rm -rf .venv .pytest_cache .ruff_cache .mypy_cache .uv
