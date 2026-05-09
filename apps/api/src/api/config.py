@@ -32,5 +32,10 @@ class Settings(BaseSettings):
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
 
+    otel_exporter_otlp_endpoint: str = ""
+    otel_service_name: str = "education-api"
+    sentry_dsn: str = ""
+    environment: str = "dev"
+
 
 settings = Settings()

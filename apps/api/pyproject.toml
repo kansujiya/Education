@@ -22,6 +22,11 @@ dependencies = [
     "argon2-cffi>=23.1",
     "uvicorn>=0.30",
     "email-validator>=2.2",
+    "opentelemetry-api>=1.27",
+    "opentelemetry-sdk>=1.27",
+    "opentelemetry-exporter-otlp-proto-http>=1.27",
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "sentry-sdk>=2.18",
 ]
 
 [project.optional-dependencies]

@@ -40,6 +40,9 @@ jobs:
       - name: Pytest
         run: uv run pytest -q
 
+      - name: Eval-suite gate (M-10 — agent regressions block merge)
+        run: uv run pytest -q apps/api/tests/eval
+
       - name: Alembic migrations apply on SQLite
         run: |
           cd infra/alembic

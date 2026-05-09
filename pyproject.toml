@@ -5,7 +5,8 @@ description = "Agentic AI exam-prep companion"
 requires-python = ">=3.11"
 
 [tool.uv.workspace]
-members = ["apps/*", "mcp/*", "packages/*"]
+members = ["apps/api", "mcp/*", "packages/*"]
+# apps/web is a Node project (pnpm), not a Python workspace member.
 
 [tool.uv.sources]
 shared = { workspace = true }
@@ -34,6 +35,15 @@ strict = true
 warn_unreachable = true
 disallow_untyped_decorators = false
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# Optional observability deps — ignore missing imports so mypy passes
+# on machines that haven't installed them.
+module = [
+    "opentelemetry.*",
+    "sentry_sdk.*",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "-q --strict-markers"

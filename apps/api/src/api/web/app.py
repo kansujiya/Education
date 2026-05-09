@@ -14,6 +14,7 @@ from sqlalchemy import text
 
 from api.bus.events import get_redis
 from api.db.session import get_engine
+from api.web.observability import configure_observability
 from api.web.rate_limit import RateLimitMiddleware
 from api.web.routers import auth as auth_router
 from api.web.routers import exams as exams_router
@@ -29,6 +30,7 @@ def build_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
 
+    configure_observability(app)
     app.add_middleware(RateLimitMiddleware)
 
     app.include_router(auth_router.router)
