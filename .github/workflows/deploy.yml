@@ -1,0 +1,46 @@
+name: Deploy
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ssh-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Push code + restart compose on the VM
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/education
+            git fetch --all --tags
+            git checkout ${{ github.ref_name }}
+            cd infra
+            docker compose -f docker-compose.prod.yml pull api || true
+            docker compose -f docker-compose.prod.yml up -d --build api caddy redis
+            docker compose -f docker-compose.prod.yml exec -T api alembic -c /app/infra/alembic/alembic.ini upgrade head
+
+  smoke:
+    needs: ssh-deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Smoke test the public API
+        env:
+          BASE_URL: ${{ secrets.PROD_BASE_URL }}
+        run: |
+          if [ -z "$BASE_URL" ]; then
+            echo "PROD_BASE_URL secret not set; skipping smoke test."
+            exit 0
+          fi
+          ./scripts/smoke-test.sh "$BASE_URL"
