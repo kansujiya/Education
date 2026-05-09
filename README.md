@@ -2,7 +2,9 @@
 
 An agentic AI exam-preparation companion. Multi-agent system that takes a candidate from "I have an exam on date X" to "I am ready to clear it."
 
-> **Status:** v0.1 in progress · current milestone: **M-0 Foundations**.
+> **Status:** v0.1 complete (M-0 → M-11). 139 Python tests + 10 web tests green;
+> mypy strict over 68 source files; ruff clean. See [`milestones.md`](./milestones.md)
+> for the full ladder.
 
 ## Documentation
 
@@ -140,6 +142,55 @@ curl http://localhost:8000/v1/me/plan -H "Authorization: Bearer $TOKEN"
 ```
 
 The full v1 surface is documented at `http://localhost:8000/docs` (FastAPI auto-OpenAPI). All `/v1/me/*` endpoints require a JWT bearer token, are scoped to that user's data, and rate-limited to 60 req/min per user.
+
+### M-8 demo · "Web walkthrough"
+
+```bash
+make web-install      # pnpm install
+make serve            # backend on :8000
+make web-dev          # SPA on :5173 (Vite proxies /v1 to :8000)
+```
+
+Pages: `/login`, `/onboard`, `/plan`, `/topic/:topicId`, `/progress`, `/insight`.
+Auth context stores the JWT in `localStorage`; protected routes redirect to login.
+The mind-map viewer dynamically imports Mermaid (10 vitest unit tests cover the
+typed API client; CI runs `tsc --noEmit` + `vite build` on every PR).
+
+### M-9 demo · "Free-tier production deploy"
+
+Artefacts: [`apps/api/Dockerfile`](./apps/api/Dockerfile),
+[`infra/docker-compose.prod.yml`](./infra/docker-compose.prod.yml),
+[`infra/Caddyfile`](./infra/Caddyfile),
+[`.github/workflows/deploy.yml`](./.github/workflows/deploy.yml),
+[`scripts/smoke-test.sh`](./scripts/smoke-test.sh),
+[`scripts/check-dashboards.sh`](./scripts/check-dashboards.sh),
+[`scripts/keep-alive.sh`](./scripts/keep-alive.sh).
+
+Tag `v*` to fire the deploy workflow against the configured VM. Smoke + cost
+verification scripts run from any laptop against the deployed URL.
+
+### M-10 demo · "Hardening"
+
+```bash
+# Local stack already up via ``make serve``
+make loadtest                                     # 10 users × 5 attempts; reports p50/p95
+OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4318 make serve
+SENTRY_DSN=https://...@sentry.io/123 make serve
+```
+
+OTel + Sentry are opt-in (env-var driven; default off). The eval suite (Tutor
+groundedness, Examiner judge precision, Assessor card quality, Coach plan
+invariants) runs as a dedicated CI job so agent-quality regressions block merge.
+
+### M-11 demo · "Volunteer acceptance"
+
+```bash
+make acceptance       # prints docs/runbook-acceptance.md
+```
+
+A fresh engineer follows [`tasks.md` Phase 10](./tasks.md) using the runbook in
+[`docs/runbook-acceptance.md`](./docs/runbook-acceptance.md), reaches a green
+production smoke test in ≤ 90 minutes at $0 infra spend, and signs the gate.
 
 ## Development
 

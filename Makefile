@@ -87,5 +87,11 @@ web-build: ## M-8: typecheck + production bundle
 web-test: ## M-8: vitest unit tests for the API client
 	cd apps/web && pnpm test
 
+loadtest: ## M-10: 10 concurrent users x 5 attempts each against the local API
+	uv run python scripts/loadtest.py --base-url http://localhost:8000 --users 10 --attempts 5
+
+acceptance: ## M-11: print the v0.1 acceptance runbook
+	@cat docs/runbook-acceptance.md
+
 clean: ## Remove caches and venv
 	rm -rf .venv .pytest_cache .ruff_cache .mypy_cache .uv
