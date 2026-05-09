@@ -75,5 +75,17 @@ export-bundle: ## M-6 demo: bundle a topic's lesson + mindmap + cards into a ZIP
 serve: ## M-7: run the FastAPI app on http://127.0.0.1:8000 with auto-reload
 	uv run uvicorn api.web.app:app --reload --port 8000
 
+web-install: ## M-8: install the React + Vite client deps
+	cd apps/web && pnpm install
+
+web-dev: ## M-8: run the web client on http://localhost:5173 (proxies /v1 to :8000)
+	cd apps/web && pnpm dev
+
+web-build: ## M-8: typecheck + production bundle
+	cd apps/web && pnpm build
+
+web-test: ## M-8: vitest unit tests for the API client
+	cd apps/web && pnpm test
+
 clean: ## Remove caches and venv
 	rm -rf .venv .pytest_cache .ruff_cache .mypy_cache .uv

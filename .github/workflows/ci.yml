@@ -33,7 +33,9 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Mypy strict
-        run: uv run mypy packages/shared/src apps/api/src
+        run: |
+          uv run mypy packages/shared/src apps/api/src \
+            mcp/syllabus/src mcp/mindmap/src mcp/pyq/src mcp/stats/src mcp/pdf/src
 
       - name: Pytest
         run: uv run pytest -q
@@ -43,3 +45,27 @@ jobs:
           cd infra/alembic
           uv run alembic upgrade head
           uv run alembic downgrade base
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        run: pnpm lint
+      - name: Test
+        run: pnpm test
+      - name: Build
+        run: pnpm build

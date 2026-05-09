@@ -38,3 +38,7 @@ seeds/*.local.*
 
 # Docker
 volumes/
+
+# Node
+node_modules/
+apps/web/.vite/
