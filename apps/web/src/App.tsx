@@ -7,6 +7,7 @@ import {
   Routes,
 } from "react-router-dom";
 import { AuthProvider, useAuth } from "./components/Auth";
+import { HomePage } from "./pages/Home";
 import { InsightPage } from "./pages/Insight";
 import { LoginPage } from "./pages/Login";
 import { OnboardPage } from "./pages/Onboard";
@@ -25,6 +26,7 @@ function Shell() {
   return (
     <div className="app">
       <nav className="topnav">
+        <NavLink to="/" end>Home</NavLink>
         <NavLink to="/plan">Plan</NavLink>
         <NavLink to="/progress">Progress</NavLink>
         <NavLink to="/insight">Insight</NavLink>
@@ -52,6 +54,7 @@ export function App() {
       <BrowserRouter>
         <Routes>
           <Route element={<Shell />}>
+            <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route element={<Protected />}>
               <Route path="/onboard" element={<OnboardPage />} />
@@ -60,7 +63,7 @@ export function App() {
               <Route path="/progress" element={<ProgressPage />} />
               <Route path="/insight" element={<InsightPage />} />
             </Route>
-            <Route path="*" element={<Navigate to="/plan" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
       </BrowserRouter>
