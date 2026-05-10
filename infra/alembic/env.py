@@ -1,7 +1,7 @@
 """Alembic environment configured for Education AI.
 
-Reads ``DATABASE_URL`` from env / .env and points autogenerate at the
-ORM metadata defined in ``api.db.models``.
+Reads ``DATABASE_URL`` from the project-root ``.env`` (or the OS env)
+and points autogenerate at the ORM metadata defined in ``api.db.models``.
 """
 
 from __future__ import annotations
@@ -17,8 +17,35 @@ from sqlalchemy import engine_from_config, pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-# Make src layouts importable when alembic is invoked from any cwd.
+# Project root contains ``.env``. We're at infra/alembic/env.py, so ../..
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _load_dotenv() -> None:
+    """Load ``.env`` from the project root if present.
+
+    The Makefile invokes alembic with ``cd infra/alembic`` so the project-
+    root ``.env`` would otherwise be invisible. We parse the file by hand
+    (no python-dotenv dependency) so DATABASE_URL is honoured regardless
+    of CWD. Keys already set in the environment win — env > file.
+    """
+    env_path = ROOT / ".env"
+    if not env_path.is_file():
+        return
+    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv()
+
+# Make src layouts importable when alembic is invoked from any cwd.
 for path in [
     ROOT / "apps" / "api" / "src",
     ROOT / "packages" / "shared" / "src",
@@ -34,7 +61,7 @@ if config.config_file_name is not None:
 
 # Resolve URL with this priority:
 # 1) An explicit sqlalchemy.url set on the Config (e.g. by tests via Config.set_main_option).
-# 2) DATABASE_URL env var (production / docker-compose).
+# 2) DATABASE_URL env var (production / docker-compose / loaded from .env above).
 # 3) A SQLite fallback for ad-hoc local invocation.
 def _resolve_url() -> str:
     explicit = config.get_main_option("sqlalchemy.url")
